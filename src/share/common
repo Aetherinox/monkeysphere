@@ -8,7 +8,7 @@
 # Jamie McClelland <jm@mayfirst.org>
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 #
-# Copyright 2008-2009, released under the GPL, version 3 or later
+# Copyright 2008-2019, released under the GPL, version 3 or later
 
 # all-caps variables are meant to be user supplied (ie. from config
 # file) and are considered global
@@ -93,20 +93,14 @@ log() {
 }
 
 # run command as monkeysphere user
-su_monkeysphere_user() {
+run_as_monkeysphere_user() {
     # our main goal here is to run the given command as the the
     # monkeysphere user, but without prompting for any sort of
     # authentication.  If this is not possible, we should just fail.
-
-    # FIXME: our current implementation is overly restrictive, because
-    # there may be some su PAM configurations that would allow su
-    # "$MONKEYSPHERE_USER" -c "$@" to Just Work without prompting,
-    # allowing specific users to invoke commands which make use of
-    # this user.
-
-    # chpst (from runit) would be nice to use, but we don't want to
-    # introduce an extra dependency just for this.  This may be a
-    # candidate for re-factoring if we switch implementation languages.
+    #
+    # A simple command and its arguments are expected.  Shell
+    # expressions are not supported.  If they are required, they may
+    # be executed with 'bash -c "<EXPR>"'.
 
     case $(id -un) in
 	# if monkeysphere user, run the command as a subshell
@@ -114,10 +108,10 @@ su_monkeysphere_user() {
 	    ( "$@" )
 	    ;;
 
-         # if root, su command as monkeysphere user
+         # if root, run command as monkeysphere user
 	'root')
             # requote arguments using bash builtin feature (see "help printf"):
-	    su "$MONKEYSPHERE_USER" -s "$(which bash)" -c "$(printf "%q " "$@")"
+	    runuser -u "$MONKEYSPHERE_USER" -- "$@"
 	    ;;
 
 	# otherwise, fail
@@ -139,12 +133,12 @@ cutline() {
 
 # make a temporary directory
 msmktempdir() {
-    mktemp -d ${TMPDIR:-/tmp}/monkeysphere.XXXXXXXXXX
+    mktemp -d -- "${TMPDIR:-/tmp}/monkeysphere.XXXXXXXXXX"
 }
 
 # make a temporary file
 msmktempfile() {
-    mktemp ${TMPDIR:-/tmp}/monkeysphere.XXXXXXXXXX
+    mktemp -- "${TMPDIR:-/tmp}/monkeysphere.XXXXXXXXXX"
 }
 
 # this is a wrapper for doing lock functions.
@@ -243,10 +237,15 @@ advance_date() {
 print_date_from_seconds_since_the_epoch() {
     local seconds="$1"
     local gnutry
-    
-    if ! date '+%F %T' -d @"${seconds}" 2>/dev/null ; then
-        # try it the BSD date way:
-        date -r "${seconds}" '+%F %T'
+
+    if [ -z "$seconds" ] || [[ "$seconds" =~ [^0-9] ]]; then
+        # not a decimal number, don't bother trying to pass it to date
+        printf "<unknown>\n"
+    else
+        if ! date '+%F %T' -d @"${seconds}" 2>/dev/null ; then
+            # try it the BSD date way:
+            date -r "${seconds}" '+%F %T'
+        fi
     fi
 }
 
@@ -490,7 +489,7 @@ gpg2ssh() {
     
     keyID="$1"
 
-    gpg --export --no-armor "$keyID" | openpgp2ssh "$keyID" 2>/dev/null
+    gpg --export-ssh-key "0x${keyID}!" 2>/dev/null | cut -f1,2 -d' '
 }
 
 # output known_hosts line from ssh key

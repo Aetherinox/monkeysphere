@@ -16,9 +16,11 @@ case $1 in
 	    echo "adding monkeysphere user..."
 	    adduser --quiet --system --no-create-home --group \
 		--home "$VARLIB" \
-		--shell '/bin/bash' \
 		--gecos 'monkeysphere authentication user,,,' \
 		monkeysphere
+	else
+            # this can be removed after buster is released
+	    usermod --shell /usr/sbin/nologin monkeysphere
 	fi
 
 	# try all available transitions:
@@ -29,7 +31,6 @@ case $1 in
 		exit $RET
 	    }
 	done
-	    
 
 	# setup monkeysphere authentication
 	monkeysphere-authentication setup

@@ -40,14 +40,18 @@ On debian-derived systems, you can set this up with:
 mkdir -p "$TESTDIR"/tmp
 TEMPDIR=$(mktemp -d "${TMPDIR:-$TESTDIR/tmp}/ms.XXX")
 
-mkdir "$TEMPDIR"/bin
-ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/openpgp2ssh
-ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/pem2openpgp
-ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/keytrans
+if [ -z "$MONKEYSPHERE_TEST_USE_SYSTEM" ] ; then
+    mkdir "$TEMPDIR"/bin
+    ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/openpgp2ssh
+    ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/pem2openpgp
+    ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/keytrans
 
-# Use the local copy of executables first, instead of system ones.
-# This should help us test without installing.
-export PATH="$TEMPDIR"/bin:"$PATH"
+    # Use the local copy of executables first, instead of system ones.
+    # This should help us test without installing.
+    export PATH="$TEMPDIR"/bin:"$PATH"
+else
+    export PATH=/usr/share/monkeysphere:"$PATH"
+fi
 
 ## setup trap
 trap failed_cleanup EXIT
@@ -76,7 +80,7 @@ EOF
 # generate a key
 gpg --batch --$(get_gpg_prng_arg) --gen-key <<EOF
 Key-Type: RSA
-Key-Length: 1024
+Key-Length: 3072
 Key-Usage: sign
 Name-Real: testtest
 Expire-Date: 0
@@ -135,18 +139,18 @@ gpg --check-trustdb
 gpg --list-keys
 
 cat >"$TEMPDIR"/expectedout <<EOF
-pub:u:1024:1:$KEYID:$timestamp:::u:::scSC
+pub:u:3072:1:$KEYID:$timestamp:::u:::scSC
 uid:u::::$timestamp::E90EC72E68C6C2A0751DADC70F54F60D27B88C3D::monkeymonkey
-sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:::::8
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
 uid:u::::$timestamp::8200BD0425CC70C7D698DF3FE412044EAAB83F94::testtest
-sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:::::8
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
 EOF
 
-diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons | grep -vE '^(tru|fpr):' | sed 's/:*$//')
+diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons | grep -vE '^(tru|fpr):' | cut -d: -f1-16 | sed 's/:*$//')
 
 echo "##################################################"
 echo "### sleeping to avoid test suite breakage on fast"
-echo "### processors (see http://bugs.debian.org/591118)"
+echo "### processors (see https://bugs.debian.org/591118)"
 
 sleep 2
 
@@ -163,22 +167,22 @@ gpg --check-trustdb
 gpg --list-keys
 
 cat >"$TEMPDIR"/expectedout <<EOF
-pub:u:1024:1:$KEYID:$timestamp:::u:::scSC
+pub:u:3072:1:$KEYID:$timestamp:::u:::scSC
 uid:u::::$timestamp::E90EC72E68C6C2A0751DADC70F54F60D27B88C3D::monkeymonkey
-sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:::::8
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
 uid:r::::::8200BD0425CC70C7D698DF3FE412044EAAB83F94::testtest
-sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:::::8
-rev:!::1:$KEYID:$revtime::::monkeymonkey:30x:::::8
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
+rev:!::1:$KEYID:$revtime::::monkeymonkey:30x,20::$KEYFPR:::8
 EOF
 
 
-diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons | grep -vE '^(tru|fpr):' | sed 's/:*$//')
+diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons | grep -vE '^(tru|fpr):' | cut -d: -f1-16 | sed 's/:*$//')
 
 
 echo "##################################################"
 echo "### test working with two primary keys ... "
 
-ssh-keygen -t rsa -b 1024 -N '' -f "$TEMPDIR"/newkey
+ssh-keygen -m PEM -t rsa -b 3072 -N '' -f "$TEMPDIR"/newkey
 
 PEM2OPENPGP_USAGE_FLAGS=authenticate,certify \
 PEM2OPENPGP_TIMESTAMP="$(( $timestamp + 1 ))" pem2openpgp fubar \
@@ -194,21 +198,21 @@ PEM2OPENPGP_TIMESTAMP="$timestamp" \
     keytrans adduserid "$KEYID" "baz" | gpg --import
 
 cat >"$TEMPDIR"/expectedout <<EOF
-pub:u:1024:1:$KEYID:$timestamp:::u:::scSC
+pub:u:3072:1:$KEYID:$timestamp:::u:::scSC
 uid:u::::$timestamp::E90EC72E68C6C2A0751DADC70F54F60D27B88C3D::monkeymonkey
-sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:::::8
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
 uid:r::::::8200BD0425CC70C7D698DF3FE412044EAAB83F94::testtest
-sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:::::8
-rev:!::1:$KEYID:$revtime::::monkeymonkey:30x:::::8
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
+rev:!::1:$KEYID:$revtime::::monkeymonkey:30x,20::$KEYFPR:::8
 uid:u::::$timestamp::EDDC32D783E7F4C7B6982D9AE5DC4A61000648BA::baz
-sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:::::8
-pub:-:1024:1:$NEWKEYID:$(($timestamp + 1)):::-:::caCA
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
+pub:-:3072:1:$NEWKEYID:$(($timestamp + 1)):::-:::caCA
 uid:-::::$(($timestamp + 1))::A0D708F51CC257DEFC01AEDE1E0A5F329DFD8F16::fubar
-sig:!::1:$NEWKEYID:$(($timestamp + 1))::::fubar:13x:::::8
+sig:!::1:$NEWKEYID:$(($timestamp + 1))::::fubar:13x::$NEWKEYFPR:::8
 EOF
 
 echo "test: diff expected gpg list output"
-diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons | grep -vE '^(tru|fpr):' | sed 's/:*$//')
+diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons | grep -vE '^(tru|fpr):' | cut -d: -f1-16 | sed 's/:*$//')
 
 sort >"$TEMPDIR"/expectedout <<EOF
 $KEYFPR

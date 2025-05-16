@@ -1,15 +1,18 @@
 Source: monkeysphere
 Section: net
-Priority: extra
-Maintainer: Jameson Rollins <jrollins@finestructure.net>
+Priority: optional
+Maintainer: Debian Privacy Tools Maintainers <pkg-privacy-maintainers@lists.alioth.debian.org>
 Uploaders:
+ Antoine Beaupré <anarcat@debian.org>,
  Daniel Kahn Gillmor <dkg@fifthhorseman.net>,
+ Jameson Rollins <jrollins@finestructure.net>,
 Build-Depends:
  bash (>= 3.2),
  cpio,
- debhelper (>= 10~),
+ debhelper-compat (= 12),
  dpkg-dev (>= 1.17.14),
- gnupg (>= 2.1.18-8~deb9u4) <!nocheck>,
+ gnupg (>= 2.1.11) <!nocheck>,
+ gnupg (<< 2.2.9) <!nocheck>,
  gnupg-agent <!nocheck>,
  libassuan-dev,
  libcrypt-openssl-rsa-perl <!nocheck>,
@@ -19,25 +22,27 @@ Build-Depends:
  openssh-server <!nocheck>,
  openssl <!nocheck>,
  socat <!nocheck>,
-Standards-Version: 3.9.8
-Homepage: http://web.monkeysphere.info/
-Vcs-Git: https://anonscm.debian.org/git/collab-maint/monkeysphere -b debian
-Vcs-Browser: https://anonscm.debian.org/git/collab-maint/monkeysphere
+Standards-Version: 4.3.0
+Homepage: https://web.monkeysphere.info/
+Vcs-Git: https://salsa.debian.org/pkg-privacy-team/monkeysphere.git -b debian/stretch-backports
+Vcs-Browser: https://salsa.debian.org/pkg-privacy-team/monkeysphere
+Rules-Requires-Root: no
 
 Package: monkeysphere
 Architecture: all
 Depends:
  adduser,
- gnupg,
+ gnupg (>= 2.1.11),
  libcrypt-openssl-rsa-perl,
  libdigest-sha-perl,
  lockfile-progs | procmail,
+ openssh-client,
  ${misc:Depends},
+ ${perl:Depends},
 Recommends:
  agent-transfer,
  cron-daemon,
  netcat-openbsd | netcat | socat,
- openssh-client,
  ssh-askpass,
 Suggests:
  monkeysphere-validation-agent,
@@ -69,10 +74,10 @@ Enhances:
  openssh-client,
  openssh-server,
 Description: copy a secret key from GnuPG's gpg-agent to OpenSSH's ssh-agent
- agent-transfer is a simple utility to extract a secret key from
- GnuPG's gpg-agent and send it to a running ssh-agent.  This is useful
- for those who prefer the runtime semantics and behavior of OpenSSH's
- ssh-agent, but whose secret keys are held in long-term storage by
- GnuPG's gpg-agent.
+ agent-transfer is a simple utility to extract a secret RSA or Ed25519
+ key from GnuPG's gpg-agent and send it to a running ssh-agent.  This
+ is useful for those who prefer the runtime semantics and behavior of
+ OpenSSH's ssh-agent, but whose secret keys are held in long-term
+ storage by GnuPG's gpg-agent.
  .
  This tool comes from the monkeysphere project.

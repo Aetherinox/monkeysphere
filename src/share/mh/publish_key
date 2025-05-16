@@ -8,7 +8,7 @@
 # Jamie McClelland <jm@mayfirst.org>
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 #
-# They are Copyright 2008-2010, and are all released under the GPL,
+# They are Copyright 2008-2019, and are all released under the GPL,
 # version 3 or later.
 
 # publish keys to keyserver
@@ -31,9 +31,10 @@ else
 fi
 
 # create a temporary gnupg directory from which to publish the key
+export TMPDIR=$MHTMPDIR
 export GNUPGHOME=$(msmktempdir)
 chmod 0700 "$GNUPGHOME"
-chown "$MONKEYSPHERE_USER":"$MONKEYSPHERE_GROUP" "$GNUPGHOME"
+chown "$MONKEYSPHERE_USER":"$MONKEYSPHERE_GROUP" -- "$GNUPGHOME"
 
 cleanup() {
     if type gpgconf &>/dev/null; then
@@ -45,7 +46,7 @@ cleanup() {
 trap cleanup EXIT
 
 # import the key into the tmp dir
-su_monkeysphere_user \
+run_as_monkeysphere_user \
     gpg --quiet --import <"$HOST_KEY_FILE"
 
 ANCHORFILE=""
@@ -58,7 +59,7 @@ done
 
 # publish key
 log debug "publishing key with the following gpg command line and options:"
-su_monkeysphere_user \
+run_as_monkeysphere_user \
     gpg --keyserver "$KEYSERVER" ${ANCHORFILE:+--keyserver-options "ca-cert-file=$ANCHORFILE"} --send-keys "0x${keyID}!"
 
 # remove the tmp file

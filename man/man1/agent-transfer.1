@@ -1,4 +1,4 @@
-.TH AGENT-TRANSFER "1" "May 2016" "monkeysphere" "User Commands"
+.TH AGENT-TRANSFER "1" "Jan 2019" "monkeysphere" "User Commands"
 
 .SH NAME
 
@@ -67,6 +67,11 @@ Several other environment variables are also passed in some form to
 the gpg\-agent to help it figure out how to run a sensible pinentry,
 including GPG_TTY, TERM, DISPLAY, XAUTHORITY, GTK_IM_MODULE,
 DBUS_SESSION_BUS_ADDRESS, and LANG.
+
+.SH BUGS
+
+\fBagent-transfer\fP can only work with RSA and Ed25519 keys.  Support
+for other key types not yet implemented.  Patches welcome!
 
 .SH AUTHOR
 

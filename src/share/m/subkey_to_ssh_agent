@@ -8,7 +8,7 @@
 # Jamie McClelland <jm@mayfirst.org>
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 #
-# They are Copyright 2008-2009, and are all released under the GPL,
+# They are Copyright 2008-2019, and are all released under the GPL,
 # version 3 or later.
 
 # try to add all authentication subkeys to the agent
@@ -59,9 +59,9 @@ You might want to run 'gpg --gen-key'."
 
         # $2 regex means "is some kind of valid, or at least not invalid"
         # $12 ~ /a/ means "authentication-capable"
-        # $4 == 1 means "RSA"
+        # $4 == 1 means "RSA", $4 == 22 means "EdDSA"
         awk_pgrm='
-/^sub:/{ if (($2 ~ /^[somfuq-]$/) && ($12 ~ /a/) && ($4 == 1)) { ok = 1 }; };
+/^sub:/{ if (($2 ~ /^[somfuq-]$/) && ($12 ~ /a/) && (($4 == 1) || ($4 == 22))) { ok = 1 }; };
 /^fpr:/{ if (ok) { print $10 ; ok = 0; }; };'
 	authsubkeys=$(gpg_user --list-keys --with-colons \
 	                       --fingerprint --fingerprint $secretkeys | \
@@ -110,28 +110,16 @@ You might want to run 'monkeysphere gen-subkey'."
 
 	if [ "$1" = '-d' ]; then
 	    # we're removing the subkey:
-	    gpg_user --export --no-armor "0x${subkey}!" | openpgp2ssh "$subkey" > "$workingdir/$kname"
+	    gpg_user --export-ssh-key "0x${subkey}!" | cut -f1,2 -d' ' > "$workingdir/$kname"
 	    (cd "$workingdir" && ssh-add -d "$kname") || keysuccess="$?"
 	else
-            if is_gpg_version_greater_equal 2.1.0; then
-                awk_pgrm='
+            awk_pgrm='
 /^fpr:/{ fpr = $10 }
 /^grp:/{ if (fpr == "'"${subkey}"'") { print $10; } }'
-	        keygrip=$(gpg_user --with-colons --with-keygrip --with-fingerprint \
-                                   --with-fingerprint --list-keys "0x${subkey}!" \
-	                         | awk -F: "$awk_pgrm")
-                agent-transfer "$@" "$keygrip" "$kname" || keysuccess="$?"
-            else
-	        # we're adding the subkey:
-	        mkfifo "$workingdir/$kname"
-	        gpg_user --batch --passphrase-fd 3 3<"$workingdir/passphrase" \
-		         --export-options export-reset-subkey-passwd,export-minimal,no-export-attributes \
-		         --export-secret-subkeys --no-armor "0x${subkey}!" | openpgp2ssh "$subkey" > "$workingdir/$kname" &
-	        (cd "$workingdir" && DISPLAY=nosuchdisplay SSH_ASKPASS=/bin/false ssh-add "$@" "$kname" </dev/null )&
-
-	        passphrase_prompt "Enter passphrase for key $kname: " "$workingdir/passphrase"
-	        wait %2 || keysuccess="$?"
-            fi
+	    keygrip=$(gpg_user --with-colons --with-keygrip --with-fingerprint \
+                               --with-fingerprint --list-keys "0x${subkey}!" \
+	                  | awk -F: "$awk_pgrm")
+            agent-transfer "$@" "$keygrip" "$kname" || keysuccess="$?"
 	fi
 
 	rm -f "$workingdir/$kname"

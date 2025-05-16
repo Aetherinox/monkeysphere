@@ -4,7 +4,7 @@
 
 # Author: Jameson Rollins <jrollins@finestructure.net>, 
 #         Daniel Kahn Gillmor <dkg@fifthhorseman.net>
-# Copyright 2008-2014
+# Copyright 2008-2019
 
 set -e
 
@@ -22,7 +22,7 @@ case $1 in
             exit 1
         fi
 	# delete monkeysphere user
-	# http://wiki.debian.org/AccountHandlingInMaintainerScripts
+	# https://wiki.debian.org/AccountHandlingInMaintainerScripts
 	if which deluser >/dev/null 2>&1 ; then
 	    deluser --quiet --system monkeysphere > /dev/null || true
 	else

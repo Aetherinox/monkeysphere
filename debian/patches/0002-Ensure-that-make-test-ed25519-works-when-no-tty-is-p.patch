@@ -1,0 +1,22 @@
+From: Daniel Kahn Gillmor <dkg@fifthhorseman.net>
+Date: Thu, 24 Jan 2019 16:57:26 -0500
+Subject: Ensure that "make test-ed25519" works when no tty is present
+
+(cherry picked from commit a8f4ac40bdf8d3a5331ca9b10e2c49a7af7d0e66)
+---
+ tests/basic | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/basic b/tests/basic
+index 5bf1149..d5c4692 100755
+--- a/tests/basic
++++ b/tests/basic
+@@ -344,7 +344,7 @@ if [ "$MONKEYSPHERE_TEST_USE_ED25519" = true ]; then
+     echo "### generating ed25519 key for testuser..."
+     # from the imported secret key
+     USER_FPR=8A4B353B4CBA6F30625498BAE00B5EEEBA79B482
+-    gpg --quick-add-key "$USER_FPR" ed25519 auth 2d
++    gpg --batch --no-tty --quick-add-key "$USER_FPR" ed25519 auth 2d
+ else
+     echo "### generating standard monkeysphere key for testuser..."
+     monkeysphere gen-subkey

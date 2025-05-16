@@ -1,0 +1,23 @@
+From: Daniel Kahn Gillmor <dkg@fifthhorseman.net>
+Date: Thu, 24 Jan 2019 15:53:55 -0500
+Subject: Dump remaining jobs during test cleanup
+
+See https://bugs.debian.org/920038 for more information about why this
+additional debugging information might be useful.
+
+(cherry picked from commit 318134aaa04befb6c1cf99b1b5ed21ec16ed33ff)
+---
+ tests/common | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tests/common b/tests/common
+index 727ad0f..0fc6c19 100644
+--- a/tests/common
++++ b/tests/common
+@@ -33,5 +33,6 @@ cleanup() {
+ 	kill "$SSHD_PID"
+     fi
+ 
++    jobs
+     wait
+ }

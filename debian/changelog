@@ -1,16 +1,99 @@
-monkeysphere (0.41-1+deb9u1) stretch; urgency=medium
+monkeysphere (0.43-2~bpo9+1) stretch-backports; urgency=medium
 
-  * Prevent a FTBFS by updating the tests to accommodate an updated GnuPG in
-    stretch now producing a different output. (Closes: #934034)
+  * Rebuild for stretch-backports.
+  * Update packaging metadata for stretch-backports
+  * Adjust tests/keytrans to work with stretch GnuPG --with-colons output
 
- -- Chris Lamb <lamby@debian.org>  Wed, 14 Aug 2019 10:09:00 -0700
+ -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Fri, 01 Mar 2019 13:55:45 -0500
+
+monkeysphere (0.43-2) unstable; urgency=medium
+
+  * Autopkgtest should cover Ed25519 as well
+  * cherry-pick three upstream testing patches
+
+ -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Thu, 24 Jan 2019 17:08:16 -0500
+
+monkeysphere (0.43-1) unstable; urgency=medium
+
+  * New upstream release
+
+  [ Sunil Mohan Adapa ]
+  * Improvements in TMPDIR handling (Closes: #656750, #911907)
+  * Remove shell for monkeysphere user (Closes: #901489)
+
+  [ Daniel Kahn Gillmor ]
+  * Avoid paranoid accidental lockout (Closes: #897366)
+  * Better error reporting for pem2openpgp (Closes: #906755)
+  * Bump standards-version to 4.3.0 (no changes needed)
+  * Move to debhelper 12
+  * Use https for upstream links
+  * Use https for wiki.debian.org
+  * d/control: use ${perl:Depends} for monkeysphere
+  * d/control: document versioned GnuPG dependency from upstream
+  * d/control: explicitly depend on openssh-client for ssh-keygen
+  * Note RSA and Ed25519 keys in agent-transfer description
+  * Tell debhelper where examples come from
+  * Avoid dh_missing reporting Changelog as "not installed"
+  * use dh_missing --fail-missing
+
+ -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Wed, 23 Jan 2019 17:44:36 -0500
+
+monkeysphere (0.42-2) unstable; urgency=medium
+
+  * added cpio as a requirement for the basic autopkgtest
+  * gpg is super noisy to stderr -- ignore that noise during
+    autopkgtest
+
+ -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Thu, 18 Oct 2018 10:17:55 -0400
+
+monkeysphere (0.42-1) unstable; urgency=medium
+
+  * new upstream bugfix release.
+
+  [ Daniel Kahn Gillmor ]
+  * make print_date_from_seconds_since_the_epoch deal better with bad input
+
+  [ Helmut Grohne ]
+  * use generic compiler (closes: #883015)
+
+  [ Daniel Kahn Gillmor ]
+  * clean up test suite failures when built against newer GnuPG
+
+  [ Clint Adams ]
+  * Remove RSAAuthentication from test ssh config (Closes: #902318)
+
+  [ Antoine Beaupré ]
+  * fix more gnupg2 colons changes (Closes: #902367)
+  * yet more colon fixes that escaped previous inspections
+  * write old-style PEM files to unbreak test suite (Closes: #909700)
+
+  [ Clint Adams ]
+  * Remove deprecated option from test sshd config (Closes: #902320)
+
+  [ Sunil Mohan Adapa ]
+  * tests: Ensure that stale sockets don't fail socat (Closes: #899060)
+
+  [ Daniel Kahn Gillmor ]
+  * use --send-keys instead of --send (closes: #908228)
+  * prepare new release
+  * enable tests to operate on system installation
+  * d/copyright: use https for Format:
+  * use priority optional instead of extra
+  * added autopkgtest
+  * override package-contains-documentation-outside-usr-share-doc for
+    transitions README.txt
+  * install examples in monkeysphere package
+  * d/watch: use https
+  * packaging handled by pkg-privacy-team (updated uploaders)
+
+ -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Tue, 16 Oct 2018 12:32:30 -0400
 
 monkeysphere (0.41-1) unstable; urgency=medium
 
   * new upstream release
     - pem2openpgp now includes issuer fingerprint subpacket
       in hashed self-sig, more compatible with GnuPG 2.1.16
-      (Closes: #846554)
+      (Closes: #844971)
     - avoid blocking for entropy during test suite
       (Closes: #841208)
     - ensure that attempts to fetch primary key fingerprint only fetch
@@ -219,7 +302,7 @@ monkeysphere (0.23.1-1) unstable; urgency=low
  -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Sat, 21 Feb 2009 18:09:47 -0500
 
 monkeysphere (0.23-1) unstable; urgency=low
-  
+
   * New upstream release: "The Golden Bezoar Release"
 
  -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Sat, 21 Feb 2009 17:51:06 -0500

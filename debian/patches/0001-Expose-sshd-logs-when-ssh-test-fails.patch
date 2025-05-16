@@ -1,0 +1,21 @@
+From: Daniel Kahn Gillmor <dkg@fifthhorseman.net>
+Date: Thu, 24 Jan 2019 15:33:32 -0500
+Subject: Expose sshd logs when ssh test fails
+
+(cherry picked from commit 27a86a05d74ca8f03e574d9776c2f0efd370ed17)
+---
+ tests/basic | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tests/basic b/tests/basic
+index 8815d69..5bf1149 100755
+--- a/tests/basic
++++ b/tests/basic
+@@ -87,6 +87,7 @@ ssh_test() {
+ 	return 0
+     else
+ 	echo "##### ssh connection test FAILED. returned: $RETURN, expected: $CODE"
++        cat "$TEMPDIR/sshd.log"
+ 	return 1
+     fi
+ }

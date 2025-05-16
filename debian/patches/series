@@ -1,1 +1,4 @@
-0001-Prevent-a-FTBFS-by-updating-the-tests-to-accommodate.patch
+0001-Expose-sshd-logs-when-ssh-test-fails.patch
+0002-Ensure-that-make-test-ed25519-works-when-no-tty-is-p.patch
+0003-Dump-remaining-jobs-during-test-cleanup.patch
+0004-tests-keytrans-should-assume-unenhanced-revocation-r.patch

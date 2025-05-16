@@ -1,0 +1,36 @@
+From: Daniel Kahn Gillmor <dkg@fifthhorseman.net>
+Date: Fri, 1 Mar 2019 10:56:33 -0500
+Subject: tests: keytrans should assume unenhanced revocation reason.
+
+GnuPG 2.2.9 augmented the output of "rev" and "rvs" fields to include
+the revocation reason (see https://dev.gnupg.org/T1173 for more
+details).
+
+For debian stretch, which ships an older version, we don't expect to
+see that during testing.
+---
+ tests/keytrans | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/tests/keytrans b/tests/keytrans
+index 5c54fae..ef2804c 100755
+--- a/tests/keytrans
++++ b/tests/keytrans
+@@ -172,7 +172,7 @@ uid:u::::$timestamp::E90EC72E68C6C2A0751DADC70F54F60D27B88C3D::monkeymonkey
+ sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
+ uid:r::::::8200BD0425CC70C7D698DF3FE412044EAAB83F94::testtest
+ sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
+-rev:!::1:$KEYID:$revtime::::monkeymonkey:30x,20::$KEYFPR:::8
++rev:!::1:$KEYID:$revtime::::monkeymonkey:30x::$KEYFPR:::8
+ EOF
+ 
+ 
+@@ -203,7 +203,7 @@ uid:u::::$timestamp::E90EC72E68C6C2A0751DADC70F54F60D27B88C3D::monkeymonkey
+ sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
+ uid:r::::::8200BD0425CC70C7D698DF3FE412044EAAB83F94::testtest
+ sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
+-rev:!::1:$KEYID:$revtime::::monkeymonkey:30x,20::$KEYFPR:::8
++rev:!::1:$KEYID:$revtime::::monkeymonkey:30x::$KEYFPR:::8
+ uid:u::::$timestamp::EDDC32D783E7F4C7B6982D9AE5DC4A61000648BA::baz
+ sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x::$KEYFPR:::8
+ pub:-:3072:1:$NEWKEYID:$(($timestamp + 1)):::-:::caCA
