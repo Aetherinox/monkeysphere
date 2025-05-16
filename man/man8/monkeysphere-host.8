@@ -27,10 +27,9 @@ be omitted, and \fBmonkeysphere\-host\fP will operate on it.
 \fBmonkeysphere\-host\fP takes various subcommands:
 .TP
 .B import\-key FILE SCHEME://HOSTNAME[:PORT]
-Import an SSH host secret key from file FILE.  If FILE is
-`\-', then the key will be imported from stdin, and must be an
-RSA key.
-SCHEME://HOSTNAME[:PORT] is used to specify
+Import a PEM\-encoded host secret key from file FILE.  If FILE is
+`\-', then the key will be imported from stdin.  Only RSA keys are
+supported at the moment.  SCHEME://HOSTNAME[:PORT] is used to specify
 the scheme (e.g. ssh or https), fully\-qualified hostname (and port)
 used in the user ID of the new OpenPGP key (e.g. ssh://example.net or
 https://www.example.net).  If PORT is not specified, then no port is
@@ -179,7 +178,7 @@ using standard OpenPGP keysigning techniques.  Usually: pull the
 host's OpenPGP certificate from the keyserver, verify and sign it, and
 then re\-publish your signature.  More than one person can certify any
 certificate.  Please see
-https://web.monkeysphere.info/doc/host\-keys/ for more information
+http://web.monkeysphere.info/doc/host\-keys/ for more information
 and details.  Once an admin's signature is published, users accessing
 the host can use the certificate to validate the host's key without
 having to manually check the host key's fingerprint (in the case of

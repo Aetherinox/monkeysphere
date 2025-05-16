@@ -153,7 +153,7 @@ show_key_info() {
     local otherUids
 
     # get the ssh key of the gpg key
-    sshFingerprint=$(gpg2ssh "$keyid" | ssh-keygen -l -f - | awk '{ print $2 }')
+    sshFingerprint=$(gpg2ssh "$keyid" | "$SYSSHAREDIR/keytrans" sshfpr)
 
     # get the sigs for the matching key
     gpgSigOut=$(gpg_user --check-sigs \
@@ -190,7 +190,7 @@ EOF
 
 }
 
-# "marginal case" output in the case that there is not a full
+# "marginal case" ouput in the case that there is not a full
 # validation path to the host
 output_no_valid_key() {
     local userID

@@ -1,0 +1,8 @@
+debian/tmp/usr/share/man/man1/monkeysphere.1.gz
+debian/tmp/usr/share/man/man1/openpgp2pem.1.gz
+debian/tmp/usr/share/man/man1/openpgp2spki.1.gz
+debian/tmp/usr/share/man/man1/openpgp2ssh.1.gz
+debian/tmp/usr/share/man/man1/pem2openpgp.1.gz
+debian/tmp/usr/share/man/man7/monkeysphere.7.gz
+debian/tmp/usr/share/man/man8/monkeysphere-authentication.8.gz
+debian/tmp/usr/share/man/man8/monkeysphere-host.8.gz

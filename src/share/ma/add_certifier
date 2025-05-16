@@ -22,7 +22,7 @@
 # Jamie McClelland <jm@mayfirst.org>
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 #
-# They are Copyright 2008-2019, and are all released under the GPL,
+# They are Copyright 2008-2009, and are all released under the GPL,
 # version 3 or later.
 
 add_certifier() {
@@ -98,27 +98,14 @@ if [ -f "$keyID" -o "$keyID" = '-' ] ; then
 	log verbose "reading key from file '$keyID'..."
     fi
 
-    TMPDIR=$MATMPDIR
-    tmpDir=$(msmktempdir)
-    trap "$(printf 'rm -rf -- %q' "$tmpDir")" EXIT
-
-    # fix permissions and ownership on temporary directory which will
-    # be used by monkeysphere user
-    chmod 0700 "$tmpDir"
-    chown "$MONKEYSPHERE_USER":"$MONKEYSPHERE_GROUP" -- "$tmpDir"
-
     # check the key is ok as monkeysphere user before loading
     log debug "checking keys in file..."
-    fingerprint=$(run_as_monkeysphere_user env "TMPDIR=$tmpDir" \
+    fingerprint=$(su_monkeysphere_user \
 	bash -c "$(printf ". %q && list_primary_fingerprints" "${SYSSHAREDIR}/common")" < "$keyID")
 
     if [ $(printf "%s" "$fingerprint" | egrep -c '^[A-F0-9]{40}$') -ne 1 ] ; then
 	failure "There was not exactly one gpg key in the file."
     fi
-
-    # remove the temporary directory
-    trap - EXIT
-    rm -rf -- "$tmpDir"
 
     # load the key
     gpg_sphere --import <"$keyID" 2>/dev/null \

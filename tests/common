@@ -33,6 +33,5 @@ cleanup() {
 	kill "$SSHD_PID"
     fi
 
-    jobs
     wait
 }

@@ -2,7 +2,7 @@
 
 # Makefile for monkeysphere
 
-# © 2008-2019 Daniel Kahn Gillmor <dkg@fifthhorseman.net>
+# © 2008-2010 Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 # Licensed under GPL v3 or later
 
 MONKEYSPHERE_VERSION = `head -n1 Changelog | sed 's/.*(\([^-]*\)).*/\1/'`
@@ -30,7 +30,7 @@ REPLACED_COMPRESSED_MANPAGES = $(addsuffix .gz,$(addprefix replaced/,$(wildcard 
 all: src/agent-transfer/agent-transfer $(addprefix replaced/,$(REPLACEMENTS)) $(REPLACED_COMPRESSED_MANPAGES)
 
 src/agent-transfer/agent-transfer: src/agent-transfer/main.c src/agent-transfer/ssh-agent-proto.h
-	$(CC) -o $@ $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $< $(LIBS)
+	gcc -o $@ $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $< $(LIBS)
 
 debian-package:
 	git buildpackage -uc -us
@@ -38,10 +38,10 @@ debian-package:
 # don't explicitly depend on the tarball, since our tarball
 # (re)generation is not idempotent even when no source changes.
 freebsd-distinfo: 
-	./util/build-freebsd-distinfo
+	./utils/build-freebsd-distinfo
 
 macports-portfile:
-	./util/build-macports-portfile
+	./utils/build-macports-portfile
 
 clean:
 	rm -f src/agent-transfer/agent-transfer
@@ -57,7 +57,7 @@ replaced/%: %
 	-e 's:__SYSDATADIR_PREFIX__:$(LOCALSTATEDIR):'
 
 replaced/%.gz: replaced/%
-	gzip -f -n $<
+	gzip -n $<
 
 # this target is to be called from the tarball, not from the git
 # working dir!
@@ -73,6 +73,7 @@ install: all installman
 	install src/monkeysphere-authentication-keys-for-user $(DESTDIR)$(PREFIX)/share/monkeysphere
 	install -m 0644 src/share/common $(DESTDIR)$(PREFIX)/share/monkeysphere
 	install -m 0644 replaced/src/share/defaultenv $(DESTDIR)$(PREFIX)/share/monkeysphere
+	install -m 0755 src/share/checkperms $(DESTDIR)$(PREFIX)/share/monkeysphere
 	install -m 0755 src/share/keytrans $(DESTDIR)$(PREFIX)/share/monkeysphere
 	ln -sf ../share/monkeysphere/keytrans $(DESTDIR)$(PREFIX)/bin/pem2openpgp
 	ln -sf ../share/monkeysphere/keytrans $(DESTDIR)$(PREFIX)/bin/openpgp2ssh
@@ -102,17 +103,14 @@ installman: $(REPLACED_COMPRESSED_MANPAGES)
 # this target depends on you having the monkeysphere-docs
 # repo checked out as a peer of your monkeysphere repo.
 releasenote:
-	../monkeysphere-docs/util/build-releasenote
+	../monkeysphere-docs/utils/build-releasenote
 
-test: test-keytrans test-basic test-ed25519
+test: test-keytrans test-basic
 
 check: test
 
 test-basic: src/agent-transfer/agent-transfer
 	MONKEYSPHERE_TEST_NO_EXAMINE=true ./tests/basic
-
-test-ed25519: src/agent-transfer/agent-transfer
-	MONKEYSPHERE_TEST_NO_EXAMINE=true MONKEYSPHERE_TEST_USE_ED25519=true ./tests/basic
 
 test-keytrans: src/agent-transfer/agent-transfer
 	MONKEYSPHERE_TEST_NO_EXAMINE=true ./tests/keytrans

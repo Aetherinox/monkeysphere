@@ -10,7 +10,7 @@
 #   Jameson Rollins <jrollins@fifthhorseman.net>
 #   Micah Anderson <micah@riseup.net> 
 #
-# Copyright: © 2008-2019
+# Copyright: © 2008-2016
 # License: GPL v3 or later
 
 # these tests should all be able to run as a non-privileged user.
@@ -31,6 +31,14 @@ source "$TESTDIR"/common
 ## test has *more* requirements than plain ol' monkeysphere:
 [ -f /usr/sbin/sshd ] || { echo "You must have sshd installed to run this test." ; exit 1; }
 which socat >/dev/null || { echo "You must have socat installed to run this test." ; exit 1; }
+
+perl -MCrypt::OpenSSL::RSA -e 1 2>/dev/null || { echo "You must have the perl module Crypt::OpenSSL::RSA installed to run this test.  
+On debian-derived systems, you can set this up with:
+  apt-get install libcrypt-openssl-rsa-perl" ; exit 1; }
+
+perl -MDigest::SHA -e 1 2>/dev/null || { echo "You must have the perl module Digest::SHA installed to run this test.  
+On debian-derived systems, you can set this up with:
+  apt-get install libdigest-sha-perl" ; exit 1; }
 
 ## FIXME: other checks?
 
@@ -55,7 +63,7 @@ ssh_test() {
 
     # start the ssh daemon on the socket
     echo "##### starting ssh server..."
-    socat EXEC:"/usr/sbin/sshd -f ${SSHD_CONFIG} -i -D -e" "UNIX-LISTEN:${SOCKET},unlink-early" 2> "$TEMPDIR"/sshd.log &
+    socat EXEC:"/usr/sbin/sshd -f ${SSHD_CONFIG} -i -D -e" "UNIX-LISTEN:${SOCKET}" 2> "$TEMPDIR"/sshd.log &
     SSHD_PID="$!"
 
     # wait until the socket is created before continuing
@@ -79,7 +87,6 @@ ssh_test() {
 	return 0
     else
 	echo "##### ssh connection test FAILED. returned: $RETURN, expected: $CODE"
-        cat "$TEMPDIR/sshd.log"
 	return 1
     fi
 }
@@ -118,19 +125,13 @@ trap failed_cleanup EXIT
 mkdir -p "$TESTDIR"/tmp
 TEMPDIR=$(mktemp -d "${TMPDIR:-$TESTDIR/tmp}/ms.XXX")
 
-if [ -z "$MONKEYSPHERE_TEST_USE_SYSTEM" ] ; then
-    # Use the local copy of executables first, instead of system ones.
-    # This should help us test without installing.
-    export PATH="$TESTDIR/../src:$TESTDIR/../src/agent-transfer:$PATH"
+# Use the local copy of executables first, instead of system ones.
+# This should help us test without installing.
+export PATH="$TESTDIR/../src:$TESTDIR/../src/agent-transfer:$PATH"
 
-    export MONKEYSPHERE_SYSSHAREDIR="$TESTDIR"/../src/share
-else
-    if ! which monkeysphere-host; then
-        PATH=/usr/sbin:"$PATH"
-    fi
-fi
-export MONKEYSPHERE_SYSCONFIGDIR="$TEMPDIR"
 export MONKEYSPHERE_SYSDATADIR="$TEMPDIR"
+export MONKEYSPHERE_SYSCONFIGDIR="$TEMPDIR"
+export MONKEYSPHERE_SYSSHAREDIR="$TESTDIR"/../src/share
 export MONKEYSPHERE_MONKEYSPHERE_USER=$(whoami)
 
 HOST_KEY_FILE="$MONKEYSPHERE_SYSCONFIGDIR"/host_keys.pub.pgp
@@ -142,7 +143,7 @@ export MONKEYSPHERE_CHECK_KEYSERVER=false
 export MONKEYSPHERE_KEYSERVER=example.org
 
 export MONKEYSPHERE_LOG_LEVEL=DEBUG
-export MONKEYSPHERE_CORE_KEYLENGTH=3072
+export MONKEYSPHERE_CORE_KEYLENGTH=1024
 export MONKEYSPHERE_PROMPT=false
 
 # unset SUBKEYS_FOR_AGENT variable which, if set, would confuse the
@@ -165,7 +166,7 @@ export DISPLAY=monkeys
 
 ## we cannot do proper directory permissions checking if the current
 ## working directory has unsatisfactory permissions:
-if bash -c "$(printf 'source %q/common  && check_perms %q %q' "$MONKEYSPHERE_SYSSHAREDIR" "$(whoami)" "$TEMPDIR")"; then 
+if "$MONKEYSPHERE_SYSSHAREDIR"/checkperms $(whoami) "$TEMPDIR"; then 
     echo "Permissions on temporary directory '$TEMPDIR' are OK for permissions checks."
     TEMPDIR_PERMISSIONS_SAFE=yes
 else
@@ -247,7 +248,7 @@ echo "### configuring sshd..."
 cp "$TESTDIR"/etc/ssh/sshd_config "$SSHD_CONFIG"
 # write the sshd_config
 cat <<EOF >> "$SSHD_CONFIG"
-HostKey ${MONKEYSPHERE_SYSDATADIR}/ssh_host_key
+HostKey ${MONKEYSPHERE_SYSDATADIR}/ssh_host_rsa_key
 AuthorizedKeysFile ${MONKEYSPHERE_SYSDATADIR}/authorized_keys/%u
 EOF
 
@@ -267,12 +268,8 @@ fi
 echo
 echo "##################################################"
 echo "### import host key..."
-if [ "$MONKEYSPHERE_TEST_USE_ED25519" = true ]; then
-    ssh-keygen -t ed25519 -N '' -f "$TEMPDIR"/ssh_host_key
-else
-    ssh-keygen -b 3072 -t rsa -N '' -f "$TEMPDIR"/ssh_host_key
-fi
-monkeysphere-host import-key "$TEMPDIR"/ssh_host_key ssh://testhost.example
+ssh-keygen -b 1024 -t rsa -N '' -f "$TEMPDIR"/ssh_host_rsa_key
+monkeysphere-host import-key "$TEMPDIR"/ssh_host_rsa_key ssh://testhost.example
 
 echo
 echo "##################################################"
@@ -336,15 +333,8 @@ monkeysphere-authentication list-certifiers
 # generate an auth subkey for the test user that expires in 2 days
 echo
 echo "##################################################"
-if [ "$MONKEYSPHERE_TEST_USE_ED25519" = true ]; then
-    echo "### generating ed25519 key for testuser..."
-    # from the imported secret key
-    USER_FPR=8A4B353B4CBA6F30625498BAE00B5EEEBA79B482
-    gpg --batch --no-tty --quick-add-key "$USER_FPR" ed25519 auth 2d
-else
-    echo "### generating standard monkeysphere key for testuser..."
-    monkeysphere gen-subkey
-fi
+echo "### generating key for testuser..."
+monkeysphere gen-subkey
 
 # add server key to testuser keychain
 echo
@@ -373,7 +363,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### testing monkeysphere keys-for-userid ..."
-diff <( monkeysphere keys-for-userid ssh://testhost.example ) <( cut -f1,2 -d' ' < "$TEMPDIR"/ssh_host_key.pub )
+diff -q <( monkeysphere keys-for-userid ssh://testhost.example ) <( cut -f1,2 -d' ' < "$TEMPDIR"/ssh_host_rsa_key.pub )
 
 # connect to test sshd, using monkeysphere ssh-proxycommand to verify
 # the identity before connection.  This should work in both directions!
@@ -596,7 +586,7 @@ target_hostname=testhost2.example ssh_test true 255
 echo
 echo "##################################################"
 echo "### testing monkeysphere authentication keys-for-user"
-diff <(monkeysphere-authentication keys-for-user $(whoami) | cut -d' ' -f1,2) <(cut -d' ' -f1,2 ${MONKEYSPHERE_SYSDATADIR}/authorized_keys/${MONKEYSPHERE_MONKEYSPHERE_USER}) 
+diff -q <(monkeysphere-authentication keys-for-user $(whoami) | cut -d' ' -f1,2) <(cut -d' ' -f1,2 ${MONKEYSPHERE_SYSDATADIR}/authorized_keys/${MONKEYSPHERE_MONKEYSPHERE_USER}) 
 
 # test to make sure things are OK after the previous tests:
 echo
@@ -612,7 +602,7 @@ echo
 echo "##################################################"
 echo "### Testing TLS setup..."
 
-openssl req -config "$TESTDIR"/openssl.cnf -x509 -newkey rsa:3072 -subj '/DC=example/DC=testhost/CN=testhost.example/' -days 3 -keyout "$TEMPDIR"/tls_key.pem -nodes >"$TEMPDIR"/tls_cert.pem
+openssl req -config "$TESTDIR"/openssl.cnf -x509 -newkey rsa:1024 -subj '/DC=example/DC=testhost/CN=testhost.example/' -days 3 -keyout "$TEMPDIR"/tls_key.pem -nodes >"$TEMPDIR"/tls_cert.pem
 monkeysphere-host import-key "$TEMPDIR"/tls_key.pem https://testhost.example
 
 # FIXME: how can we test this via an https client?  

@@ -1,0 +1,9 @@
+etc/monkeysphere/*
+usr/bin/monkeysphere
+usr/bin/openpgp2pem
+usr/bin/openpgp2spki
+usr/bin/openpgp2ssh
+usr/bin/pem2openpgp
+usr/sbin/*
+usr/share/monkeysphere/*
+usr/share/monkeysphere/*/*

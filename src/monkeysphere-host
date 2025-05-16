@@ -8,7 +8,7 @@
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 # Micah Anderson <micah@riseup.net>
 #
-# They are Copyright 2008-2019, and are all released under the GPL,
+# They are Copyright 2008-2010, and are all released under the GPL,
 # version 3 or later.
 
 ########################################################################
@@ -29,15 +29,6 @@ MHSHAREDIR="${SYSSHAREDIR}/mh"
 
 # datadir for host functions
 MHDATADIR="${SYSDATADIR}/host"
-
-# temp directory to enable sharing a temporary directory between root
-# and monkeysphere users. This is needed because on systems with
-# libpam-tmpdir, simply changing ownership/permissions on a directory
-# is not enough to share the directory. Parent directories such as
-# /tmp/user/0 will be inaccessible to monkeysphere user.
-#
-# XXX: Reusing monkeysphere-authentication's tmp directory.
-MHTMPDIR="${SYSDATADIR}/authentication/tmp"
 
 # host pub key files
 HOST_KEY_FILE="${SYSDATADIR}/host_keys.pub.pgp"
@@ -131,15 +122,11 @@ check_service_name() {
     [ -n "$name" ] || \
         failure "You must supply a service name to check"
 
-    [[ "$name" = "${name,,}" ]] || \
+    printf '%s' "$name" | perl -n -e '($str = $_) =~ s/\s//g ; exit !(lc($str) eq $_);' || \
         failure "Not a valid service name: '$name'
 
-Service names should be canonicalized to all lower-case."
-
-    [[ "$name" = "${name//$' \n\r\t'/}" ]] || \
-        failure "Not a valid service name: '$name'
-
-Service names should not contain whitespace."
+Service names should be canonicalized to all lower-case,
+with no whitespace"
 
     [[ "$name" =~ ^[a-z0-9./:-]+$ ]] || \
         failure "Not a valid service name: '$name'
@@ -236,7 +223,7 @@ check_key_userid() {
     # match to only "unknown" user IDs (host has no need for ultimate trust)
     tmpuidMatch="uid:-:$(echo $userID | gpg_escape)"
 
-    # See whether the requested user ID is present
+    # See whether the requsted user ID is present
     gpg_host_list_keys "$keyID" | cut -f1,2,10 -d: | \
 	grep -q -x -F "$tmpuidMatch" 2>/dev/null
 }
@@ -344,7 +331,7 @@ show_key() {
 
     # list the ssh fingerprint
     printf "ssh fingerprint: %s\n" \
-    "$(gpg --export-ssh-key "0x${fingerprint}!" 2>/dev/null | cut -f1,2 -d' ' | sed 's/$/ ./' | ssh-keygen -l -f -)"
+    "$(gpg --export --no-armor "$fingerprint" 2>/dev/null | "$SYSSHAREDIR/keytrans" openpgp2sshfpr "$fingerprint")"
 
     # remove the tmp file
     trap - EXIT
@@ -373,7 +360,7 @@ PROMPT=${MONKEYSPHERE_PROMPT:=$PROMPT}
 GNUPGHOME_HOST=${MONKEYSPHERE_GNUPGHOME_HOST:="${MHDATADIR}"}
 LOG_PREFIX=${MONKEYSPHERE_LOG_PREFIX:='ms: '}
 
-# export variables needed for invoking command under monkeysphere user
+# export variables needed in su invocation
 export DATE
 export LOG_LEVEL
 export KEYSERVER

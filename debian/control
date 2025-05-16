@@ -1,0 +1,78 @@
+Source: monkeysphere
+Section: net
+Priority: extra
+Maintainer: Jameson Rollins <jrollins@finestructure.net>
+Uploaders:
+ Daniel Kahn Gillmor <dkg@fifthhorseman.net>,
+Build-Depends:
+ bash (>= 3.2),
+ cpio,
+ debhelper (>= 10~),
+ dpkg-dev (>= 1.17.14),
+ gnupg (>= 2.1.18-8~deb9u4) <!nocheck>,
+ gnupg-agent <!nocheck>,
+ libassuan-dev,
+ libcrypt-openssl-rsa-perl <!nocheck>,
+ libdigest-sha-perl <!nocheck>,
+ libgcrypt20-dev,
+ lockfile-progs | procmail <!nocheck>,
+ openssh-server <!nocheck>,
+ openssl <!nocheck>,
+ socat <!nocheck>,
+Standards-Version: 3.9.8
+Homepage: http://web.monkeysphere.info/
+Vcs-Git: https://anonscm.debian.org/git/collab-maint/monkeysphere -b debian
+Vcs-Browser: https://anonscm.debian.org/git/collab-maint/monkeysphere
+
+Package: monkeysphere
+Architecture: all
+Depends:
+ adduser,
+ gnupg,
+ libcrypt-openssl-rsa-perl,
+ libdigest-sha-perl,
+ lockfile-progs | procmail,
+ ${misc:Depends},
+Recommends:
+ agent-transfer,
+ cron-daemon,
+ netcat-openbsd | netcat | socat,
+ openssh-client,
+ ssh-askpass,
+Suggests:
+ monkeysphere-validation-agent,
+Enhances:
+ openssh-client,
+ openssh-server,
+Description: leverage the OpenPGP web of trust for SSH and TLS authentication
+ SSH key-based authentication is tried-and-true, but it lacks a true
+ Public Key Infrastructure for key certification, revocation and
+ expiration.  Monkeysphere is a framework that uses the OpenPGP web of
+ trust for these PKI functions.  It can be used in both directions:
+ for users to get validated host keys, and for hosts to authenticate
+ users.  Current monkeysphere SSH tools are designed to integrate
+ with the OpenSSH implementation of the Secure Shell protocol.
+ .
+ Monkeysphere can also be used by a validation agent to validate TLS
+ connections (e.g. https).
+
+Package: agent-transfer
+Architecture: any
+Depends:
+ gnupg-agent (>= 2.1.0),
+ ${misc:Depends},
+ ${shlibs:Depends},
+Recommends:
+ openssh-client,
+ pinentry-curses | pinentry,
+Enhances:
+ openssh-client,
+ openssh-server,
+Description: copy a secret key from GnuPG's gpg-agent to OpenSSH's ssh-agent
+ agent-transfer is a simple utility to extract a secret key from
+ GnuPG's gpg-agent and send it to a running ssh-agent.  This is useful
+ for those who prefer the runtime semantics and behavior of OpenSSH's
+ ssh-agent, but whose secret keys are held in long-term storage by
+ GnuPG's gpg-agent.
+ .
+ This tool comes from the monkeysphere project.

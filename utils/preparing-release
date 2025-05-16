@@ -11,7 +11,7 @@
 
  * create debian-specific version tag:
 
-    git tag -s -m "Tagging Monkeysphere $version-1" monkeysphere_debian/$version-1 debian/master
+    git tag -s -m "Tagging Monkeysphere $version-1" monkeysphere_$version-1 debian
 
  * make releasenote
 
@@ -23,6 +23,6 @@
 
    (cd .. && dupload monkeysphere_$version-1_*.changes)
 
- * git push monkeysphere.info --follow-tags master debian/master
+ * git push monkeysphere.info --follow-tags master --follow-tags debian
 
  * cd ../monkeysphere-docs, inspect, and then push out those changes.
