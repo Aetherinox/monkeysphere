@@ -8,7 +8,7 @@
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 # Micah Anderson <micah@riseup.net>
 #
-# They are Copyright 2008-2019, and are all released under the GPL,
+# They are Copyright 2008-2009, and are all released under the GPL,
 # version 3 or later.
 
 ########################################################################
@@ -19,10 +19,13 @@ set -o pipefail
 
 PGRM=$(basename $0)
 
-SYSSHAREDIR=${MONKEYSPHERE_SYSSHAREDIR:-"__SYSSHAREDIR_PREFIX__/share/monkeysphere"}
+SYSSHAREDIR=${MONKEYSPHERE_SYSSHAREDIR:-"/usr/share/monkeysphere"}
 export SYSSHAREDIR
 . "${SYSSHAREDIR}/defaultenv"
 . "${SYSSHAREDIR}/common"
+
+SYSDATADIR=${MONKEYSPHERE_SYSDATADIR:-"/var/lib/monkeysphere"}
+export SYSDATADIR
 
 # sharedir for authentication functions
 MASHAREDIR="${SYSSHAREDIR}/ma"
@@ -51,7 +54,6 @@ Monkeysphere authentication admin tool.
 
 subcommands:
  update-users (u) [USER]...        update user authorized_keys files
- keys-for-user (k) USER            output user authorized_keys lines to stdout
  refresh-keys (r)                  refresh keys in keyring
 
  add-id-certifier (c+) KEYID|FILE  import and tsign a certification key
@@ -73,15 +75,17 @@ gpg_core() {
     GNUPGHOME="$GNUPGHOME_CORE"
     export GNUPGHOME
 
-    gpg --fixed-list-mode --no-greeting --quiet --no-tty "$@"
+    gpg --no-greeting --quiet --no-tty "$@"
 }
 
 # function to interact with the gpg sphere keyring
+# FIXME: this function requires only a single argument because of
+# problems with quote expansion.  this needs to be fixed/improved.
 gpg_sphere() {
     GNUPGHOME="$GNUPGHOME_SPHERE"
     export GNUPGHOME
  
-    run_as_monkeysphere_user gpg --fixed-list-mode --no-greeting --quiet --no-tty "$@"
+    su_monkeysphere_user "gpg --no-greeting --quiet --no-tty $@"
 }
 
 # output to stdout the core fingerprint from the gpg core secret
@@ -89,15 +93,15 @@ gpg_sphere() {
 core_fingerprint() {
     log debug "determining core key fingerprint..."
     gpg_core --list-secret-key --with-colons \
-        --with-fingerprint \
-	| awk -F: '/^fpr:/{ if (ok) { print $10 } ; ok=0 } /^sec:/{ ok=1 }'
+	--fixed-list-mode --with-fingerprint \
+	| grep ^fpr: | cut -d: -f10
 }
 
 # export signatures from core to sphere
 gpg_core_sphere_sig_transfer() {
     log debug "exporting core local sigs to sphere..."
     gpg_core --export-options export-local-sigs --export | \
-	gpg_sphere --import-options import-local-sigs --import 2>&1 | log debug
+	gpg_sphere "--import-options import-local-sigs --import" 2>&1 | log debug
 }
 
 ########################################################################
@@ -127,10 +131,10 @@ STRICT_MODES=${MONKEYSPHERE_STRICT_MODES:=$STRICT_MODES}
 REQUIRED_USER_KEY_CAPABILITY=${MONKEYSPHERE_REQUIRED_USER_KEY_CAPABILITY:="a"}
 GNUPGHOME_CORE=${MONKEYSPHERE_GNUPGHOME_CORE:="${MADATADIR}/core"}
 GNUPGHOME_SPHERE=${MONKEYSPHERE_GNUPGHOME_SPHERE:="${MADATADIR}/sphere"}
-CORE_KEYLENGTH=${MONKEYSPHERE_CORE_KEYLENGTH:="3072"}
+CORE_KEYLENGTH=${MONKEYSPHERE_CORE_KEYLENGTH:="2048"}
 LOG_PREFIX=${MONKEYSPHERE_LOG_PREFIX:='ms: '}
 
-# export variables needed for invoking command under monkeysphere user
+# export variables needed in su invocation
 export DATE
 export LOG_LEVEL
 export KEYSERVER
@@ -164,21 +168,13 @@ case $COMMAND in
 	source "${MASHAREDIR}/setup"
 	setup
 	source "${MASHAREDIR}/update_users"
-	OUTPUT_STDOUT= update_users "$@"
-	;;
-
-    'keys-for-user'|'k')
-	(( $# > 0 )) || failure "Must specify user."
-	source "${MASHAREDIR}/setup"
-	setup
-	source "${MASHAREDIR}/update_users"
-	OUTPUT_STDOUT=true update_users "$1"
+	update_users "$@"
 	;;
 
     'refresh-keys'|'refresh'|'r')
 	source "${MASHAREDIR}/setup"
 	setup
-	gpg_sphere --keyserver "$KEYSERVER" --refresh-keys
+	gpg_sphere "--keyserver $KEYSERVER --refresh-keys"
 	;;
 
     'add-identity-certifier'|'add-id-certifier'|'add-certifier'|'c+')

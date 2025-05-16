@@ -22,7 +22,7 @@
 # Jamie McClelland <jm@mayfirst.org>
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 #
-# They are Copyright 2008-2019, and are all released under the GPL,
+# They are Copyright 2008-2009, and are all released under the GPL,
 # version 3 or later.
 
 add_certifier() {
@@ -98,42 +98,29 @@ if [ -f "$keyID" -o "$keyID" = '-' ] ; then
 	log verbose "reading key from file '$keyID'..."
     fi
 
-    TMPDIR=$MATMPDIR
-    tmpDir=$(msmktempdir)
-    trap "$(printf 'rm -rf -- %q' "$tmpDir")" EXIT
-
-    # fix permissions and ownership on temporary directory which will
-    # be used by monkeysphere user
-    chmod 0700 "$tmpDir"
-    chown "$MONKEYSPHERE_USER":"$MONKEYSPHERE_GROUP" -- "$tmpDir"
-
     # check the key is ok as monkeysphere user before loading
     log debug "checking keys in file..."
-    fingerprint=$(run_as_monkeysphere_user env "TMPDIR=$tmpDir" \
-	bash -c "$(printf ". %q && list_primary_fingerprints" "${SYSSHAREDIR}/common")" < "$keyID")
+    fingerprint=$(su_monkeysphere_user \
+	". ${SYSSHAREDIR}/common; list_primary_fingerprints" < "$keyID")
 
     if [ $(printf "%s" "$fingerprint" | egrep -c '^[A-F0-9]{40}$') -ne 1 ] ; then
 	failure "There was not exactly one gpg key in the file."
     fi
 
-    # remove the temporary directory
-    trap - EXIT
-    rm -rf -- "$tmpDir"
-
     # load the key
-    gpg_sphere --import <"$keyID" 2>/dev/null \
+    gpg_sphere "--import" <"$keyID" 2>/dev/null \
 	|| failure "could not read key from '$keyID'"
 
 # else, get the key from the keyserver
 else
     log verbose "searching keyserver $KEYSERVER for keyID $keyID..."
-    gpg_sphere --keyserver "$KEYSERVER" --recv-key "0x${keyID}!" \
+    gpg_sphere "--keyserver $KEYSERVER --recv-key '0x${keyID}!'" \
 	|| failure "Could not receive a key with this ID from the '$KEYSERVER' keyserver."
 
     # get the full fingerprint of new certifier key
     log debug "getting fingerprint of certifier key..."
-    fingerprint=$(gpg_sphere --list-key --with-colons --with-fingerprint "0x${keyID}!" \
-	| awk -F: '/^fpr:/{ if (ok) { print $10 } ; ok=0 } /^pub:/{ ok=1 }')
+    fingerprint=$(gpg_sphere "--list-key --with-colons --with-fingerprint 0x${keyID}!" \
+	| grep '^fpr:' | cut -d: -f10)
 
     # test that there is only a single fingerprint
     if (( $(echo "$fingerprint" | wc -l) != 1 )) ; then
@@ -146,7 +133,7 @@ EOF
     fi
 
     log info "key found:"
-    gpg_sphere --fingerprint "0x${fingerprint}!"
+    gpg_sphere "--fingerprint 0x${fingerprint}!"
 
     if [ "$PROMPT" != "false" ] ; then
 	printf "Are you sure you want to add the above key as a certifier\nof users on this system? (Y/n) " >&2
@@ -162,7 +149,7 @@ fi
 # export the key to the core keyring so that the core can sign the
 # new certifier key
 log debug "loading key into core keyring..."
-gpg_sphere --export "0x${fingerprint}!" | gpg_core --import
+gpg_sphere "--export 0x${fingerprint}!" | gpg_core --import
 
 # edit-key script to ltsign key
 # NOTE: *all* user IDs will be ltsigned
@@ -185,7 +172,7 @@ if echo "$ltsignCommand" | \
 
     # update the sphere trustdb
     log debug "updating sphere trustdb..."
-    gpg_sphere --check-trustdb 2>&1 | log debug
+    gpg_sphere "--check-trustdb" 2>&1 | log debug
 
     log info "Identity certifier added."
 else

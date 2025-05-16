@@ -10,7 +10,7 @@
 #   Jameson Rollins <jrollins@fifthhorseman.net>
 #   Micah Anderson <micah@riseup.net> 
 #
-# Copyright: © 2008-2019
+# Copyright: © 2008-2010
 # License: GPL v3 or later
 
 # these tests should all be able to run as a non-privileged user.
@@ -32,6 +32,14 @@ source "$TESTDIR"/common
 [ -f /usr/sbin/sshd ] || { echo "You must have sshd installed to run this test." ; exit 1; }
 which socat >/dev/null || { echo "You must have socat installed to run this test." ; exit 1; }
 
+perl -MCrypt::OpenSSL::RSA -e 1 2>/dev/null || { echo "You must have the perl module Crypt::OpenSSL::RSA installed to run this test.  
+On debian-derived systems, you can set this up with:
+  apt-get install libcrypt-openssl-rsa-perl" ; exit 1; }
+
+perl -MDigest::SHA -e 1 2>/dev/null || { echo "You must have the perl module Digest::SHA installed to run this test.  
+On debian-derived systems, you can set this up with:
+  apt-get install libdigest-sha-perl" ; exit 1; }
+
 ## FIXME: other checks?
 
 ######################################################################
@@ -47,15 +55,14 @@ gpgadmin() {
 # first argument is expected return code from ssh connection
 ssh_test() {
     local RETURN=0
-    local remote_command=${1:-true}
 
     umask 0077
 
-    CODE=${2:-0}
+    CODE=${1:-0}
 
     # start the ssh daemon on the socket
     echo "##### starting ssh server..."
-    socat EXEC:"/usr/sbin/sshd -f ${SSHD_CONFIG} -i -D -e" "UNIX-LISTEN:${SOCKET},unlink-early" 2> "$TEMPDIR"/sshd.log &
+    socat EXEC:"/usr/sbin/sshd -f ${SSHD_CONFIG} -i -D -e" "UNIX-LISTEN:${SOCKET}" 2> "$TEMPDIR"/sshd.log &
     SSHD_PID="$!"
 
     # wait until the socket is created before continuing
@@ -66,7 +73,7 @@ ssh_test() {
     # make a client connection to the socket
     echo "##### starting ssh client..."
     ssh-agent bash -c \
-	"monkeysphere subkey-to-ssh-agent && ssh -F $TEMPDIR/testuser/.ssh/config ${target_hostname:-testhost.example} $remote_command" \
+	"monkeysphere subkey-to-ssh-agent && ssh -F $TEMPDIR/testuser/.ssh/config ${target_hostname:-testhost.example} true" \
 	|| RETURN="$?"
 
     # kill the sshd process if it's still running
@@ -79,7 +86,6 @@ ssh_test() {
 	return 0
     else
 	echo "##### ssh connection test FAILED. returned: $RETURN, expected: $CODE"
-        cat "$TEMPDIR/sshd.log"
 	return 1
     fi
 }
@@ -116,21 +122,15 @@ trap failed_cleanup EXIT
 # somewhere with tighter permissions.
 
 mkdir -p "$TESTDIR"/tmp
-TEMPDIR=$(mktemp -d "${TMPDIR:-$TESTDIR/tmp}/ms.XXX")
+TEMPDIR=$(mktemp -d "${TMPDIR:-$TESTDIR/tmp}/monkeyspheretest.XXXXXXX")
 
-if [ -z "$MONKEYSPHERE_TEST_USE_SYSTEM" ] ; then
-    # Use the local copy of executables first, instead of system ones.
-    # This should help us test without installing.
-    export PATH="$TESTDIR/../src:$TESTDIR/../src/agent-transfer:$PATH"
+# Use the local copy of executables first, instead of system ones.
+# This should help us test without installing.
+export PATH="$TESTDIR"/../src:"$PATH"
 
-    export MONKEYSPHERE_SYSSHAREDIR="$TESTDIR"/../src/share
-else
-    if ! which monkeysphere-host; then
-        PATH=/usr/sbin:"$PATH"
-    fi
-fi
-export MONKEYSPHERE_SYSCONFIGDIR="$TEMPDIR"
 export MONKEYSPHERE_SYSDATADIR="$TEMPDIR"
+export MONKEYSPHERE_SYSCONFIGDIR="$TEMPDIR"
+export MONKEYSPHERE_SYSSHAREDIR="$TESTDIR"/../src/share
 export MONKEYSPHERE_MONKEYSPHERE_USER=$(whoami)
 
 HOST_KEY_FILE="$MONKEYSPHERE_SYSCONFIGDIR"/host_keys.pub.pgp
@@ -142,16 +142,12 @@ export MONKEYSPHERE_CHECK_KEYSERVER=false
 export MONKEYSPHERE_KEYSERVER=example.org
 
 export MONKEYSPHERE_LOG_LEVEL=DEBUG
-export MONKEYSPHERE_CORE_KEYLENGTH=3072
+export MONKEYSPHERE_CORE_KEYLENGTH=1024
 export MONKEYSPHERE_PROMPT=false
 
 # unset SUBKEYS_FOR_AGENT variable which, if set, would confuse the
 # into trying to use the user's key, instead of the testuser's key
 unset MONKEYSPHERE_SUBKEYS_FOR_AGENT
-
-# unset MONKEYSPHERE_VALIDATION_AGENT_SOCKET variable which, if set,
-# would confuse the test into trying to talk the the user's agent
-unset MONKEYSPHERE_VALIDATION_AGENT_SOCKET
 
 export SSHD_CONFIG="$TEMPDIR"/sshd_config
 export SOCKET="$TEMPDIR"/ssh-socket
@@ -165,7 +161,7 @@ export DISPLAY=monkeys
 
 ## we cannot do proper directory permissions checking if the current
 ## working directory has unsatisfactory permissions:
-if bash -c "$(printf 'source %q/common  && check_perms %q %q' "$MONKEYSPHERE_SYSSHAREDIR" "$(whoami)" "$TEMPDIR")"; then 
+if "$MONKEYSPHERE_SYSSHAREDIR"/checkperms $(whoami) "$TEMPDIR"; then 
     echo "Permissions on temporary directory '$TEMPDIR' are OK for permissions checks."
     TEMPDIR_PERMISSIONS_SAFE=yes
 else
@@ -210,7 +206,6 @@ echo "### configuring testuser home..."
 # set up environment for testuser
 export TESTHOME="$TEMPDIR"/testuser
 export GNUPGHOME="$TESTHOME"/.gnupg
-mkdir -m 0700 -p "$GNUPGHOME"
 chmod 0700 "$GNUPGHOME"
 export SSH_ASKPASS="$TESTHOME"/.ssh/askpass
 export MONKEYSPHERE_HOME="$TESTHOME"/.monkeysphere
@@ -222,23 +217,12 @@ EOF
 cat <<EOF >> "$MONKEYSPHERE_HOME"/monkeysphere.conf
 KNOWN_HOSTS=$TESTHOME/.ssh/known_hosts
 EOF
-cat <<EOF > "$GNUPGHOME"/gpg.conf
-verify-options show-uid-validity
-list-options show-uid-validity
-EOF
 get_gpg_prng_arg >> "$GNUPGHOME"/gpg.conf
-echo pinentry-program "$TESTDIR"/phony-pinentry >> "$GNUPGHOME/gpg-agent.conf"
-gpg --import < "$TESTDIR"/home-setup/testuser/secret_keyring.keys
-gpg --import-options import-local --import < "$TESTDIR"/home-setup/testuser/public_keyring.keys
-gpg --import-ownertrust < "$TESTDIR"/home-setup/testuser/ownertrustdb.txt
 
 echo
 echo "##################################################"
 echo "### configuring admin home..."
-mkdir -m 0700 -p "$TEMPDIR"/admin/.gnupg
-gpgadmin --import < "$TESTDIR"/home-setup/admin/secret_keyring.keys
-gpgadmin --import-options import-local --import < "$TESTDIR"/home-setup/admin/public_keyring.keys
-gpgadmin --import-ownertrust < "$TESTDIR"/home-setup/admin/ownertrustdb.txt
+(cd "$TESTDIR"/home && find admin | cpio -pdu "$TEMPDIR")
 
 # set up sshd
 echo
@@ -247,7 +231,7 @@ echo "### configuring sshd..."
 cp "$TESTDIR"/etc/ssh/sshd_config "$SSHD_CONFIG"
 # write the sshd_config
 cat <<EOF >> "$SSHD_CONFIG"
-HostKey ${MONKEYSPHERE_SYSDATADIR}/ssh_host_key
+HostKey ${MONKEYSPHERE_SYSDATADIR}/ssh_host_rsa_key
 AuthorizedKeysFile ${MONKEYSPHERE_SYSDATADIR}/authorized_keys/%u
 EOF
 
@@ -267,12 +251,8 @@ fi
 echo
 echo "##################################################"
 echo "### import host key..."
-if [ "$MONKEYSPHERE_TEST_USE_ED25519" = true ]; then
-    ssh-keygen -t ed25519 -N '' -f "$TEMPDIR"/ssh_host_key
-else
-    ssh-keygen -b 3072 -t rsa -N '' -f "$TEMPDIR"/ssh_host_key
-fi
-monkeysphere-host import-key "$TEMPDIR"/ssh_host_key ssh://testhost.example
+ssh-keygen -b 1024 -t rsa -N '' -f "$TEMPDIR"/ssh_host_rsa_key
+monkeysphere-host import-key "$TEMPDIR"/ssh_host_rsa_key ssh://testhost.example
 
 echo
 echo "##################################################"
@@ -321,7 +301,7 @@ get_gpg_prng_arg >> "$MONKEYSPHERE_SYSDATADIR"/authentication/sphere/gpg.conf
 echo
 echo "##################################################"
 echo "### adding admin as certifier..."
-gpgadmin --export '<fakeadmin@example.net>' | monkeysphere-authentication add-id-certifier -
+monkeysphere-authentication add-id-certifier "$TEMPDIR"/admin/.gnupg/pubkey.gpg
 
 echo
 echo "##################################################"
@@ -336,15 +316,8 @@ monkeysphere-authentication list-certifiers
 # generate an auth subkey for the test user that expires in 2 days
 echo
 echo "##################################################"
-if [ "$MONKEYSPHERE_TEST_USE_ED25519" = true ]; then
-    echo "### generating ed25519 key for testuser..."
-    # from the imported secret key
-    USER_FPR=8A4B353B4CBA6F30625498BAE00B5EEEBA79B482
-    gpg --batch --no-tty --quick-add-key "$USER_FPR" ed25519 auth 2d
-else
-    echo "### generating standard monkeysphere key for testuser..."
-    monkeysphere gen-subkey
-fi
+echo "### generating key for testuser..."
+monkeysphere gen-subkey
 
 # add server key to testuser keychain
 echo
@@ -373,14 +346,14 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### testing monkeysphere keys-for-userid ..."
-diff <( monkeysphere keys-for-userid ssh://testhost.example ) <( cut -f1,2 -d' ' < "$TEMPDIR"/ssh_host_key.pub )
+diff -q <( monkeysphere keys-for-userid ssh://testhost.example ) <( cut -f1,2 -d' ' < "$TEMPDIR"/ssh_host_rsa_key.pub )
 
 # connect to test sshd, using monkeysphere ssh-proxycommand to verify
 # the identity before connection.  This should work in both directions!
 echo
 echo "##################################################"
 echo "### ssh connection test for success..."
-ssh_test true
+ssh_test
 
 # Make sure it works if there is "armor" written in gpg.conf
 # add other weirdnesses here as they come up.
@@ -388,7 +361,7 @@ echo
 echo "##################################################"
 echo "### testing functionality in the face of unusual gpg.conf settings..."
 echo 'armor' >> "$GNUPGHOME"/gpg.conf
-ssh_test true
+ssh_test
 
 # remove the testuser's authorized_user_ids file, update, and make
 # sure that the ssh authentication FAILS
@@ -400,7 +373,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for failure..."
-ssh_test true 255
+ssh_test 255
 mv "$TESTHOME"/.monkeysphere/authorized_user_ids{.bak,}
 
 # put improper permissions on authorized_user_ids file, update, and
@@ -413,7 +386,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for failure..."
-ssh_good_perm_test true 255
+ssh_good_perm_test 255
 chmod g-w "$TESTHOME"/.monkeysphere/authorized_user_ids
 echo
 echo "##################################################"
@@ -423,7 +396,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for failure..."
-ssh_good_perm_test true 255
+ssh_good_perm_test 255
 chmod o-w "$TESTHOME"/.monkeysphere/authorized_user_ids
 monkeysphere-authentication update-users $(whoami)
 
@@ -442,7 +415,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for success..."
-ssh_test true
+ssh_test
 echo
 echo "##################################################"
 echo "### create bad permissions on link dir and updating..."
@@ -451,7 +424,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for failure..."
-ssh_good_perm_test true 255
+ssh_good_perm_test 255
 chmod o-w "$TESTHOME"/.monkeysphere.linktest
 echo
 echo "##################################################"
@@ -461,7 +434,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for success..."
-ssh_test true
+ssh_test
 echo
 echo "##################################################"
 echo "### create bad permissions on link dir updating..."
@@ -470,7 +443,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for failure..."
-ssh_good_perm_test true 255
+ssh_good_perm_test 255
 chmod o-w "$TESTHOME"/.monkeysphere.linktest
 # FIXME: implement check of link path, and uncomment this test
 # echo
@@ -481,7 +454,7 @@ chmod o-w "$TESTHOME"/.monkeysphere.linktest
 # echo
 # echo "##################################################"
 # echo "### ssh connection test for failure..."
-# ssh_good_perm_test true 255
+# ssh_good_perm_test 255
 # chmod o-w "$TESTHOME"/.monkeysphere
 rm "$TESTHOME"/.monkeysphere/authorized_user_ids
 mv "$TESTHOME"/.monkeysphere/authorized_user_ids{.bak,}
@@ -495,7 +468,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for success..."
-ssh_test true
+ssh_test
 echo
 echo "##################################################"
 echo "### create bad permissions on link dir and updating..."
@@ -504,7 +477,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for failure..."
-ssh_good_perm_test true 255
+ssh_good_perm_test 255
 chmod o-w "$TESTHOME"/.monkeysphere.linktest
 echo
 echo "##################################################"
@@ -514,7 +487,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for success..."
-ssh_test true
+ssh_test
 echo
 echo "##################################################"
 echo "### create bad permissions on link dir updating..."
@@ -523,7 +496,7 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for failure..."
-ssh_good_perm_test true 255
+ssh_good_perm_test 255
 chmod o-w "$TESTHOME"/.monkeysphere.linktest
 rm "$TESTHOME"/.monkeysphere
 mv "$TESTHOME"/.monkeysphere{.bak,}
@@ -533,32 +506,13 @@ echo
 echo "##################################################"
 echo "### making sure we are back to normal..."
 monkeysphere-authentication update-users $(whoami)
-ssh_test true
+ssh_test
 
-# check ssh authorized_key options
-echo
-echo "##################################################"
-echo "### checking ssh authorized_key option support..."
-cp "$TESTHOME"/.monkeysphere/authorized_user_ids{,.bak}
-echo ' no-X11-forwarding' >>"$TESTHOME"/.monkeysphere/authorized_user_ids
-echo '    no-port-forwarding' >>"$TESTHOME"/.monkeysphere/authorized_user_ids
-echo '	command="/bin/false"' >>"$TESTHOME"/.monkeysphere/authorized_user_ids
-monkeysphere-authentication update-users $(whoami)
-ssh_test /bin/true 1
-ssh_test /bin/false 1
-mv "$TESTHOME"/.monkeysphere/authorized_user_ids{.bak,}
-
-# ensure we're back to normal:
-echo
-echo "##################################################"
-echo "### making sure we are back to normal..."
-monkeysphere-authentication update-users $(whoami)
-ssh_test true
 
 echo
 echo "##################################################"
 echo "### ssh connection test directly to 'testhost2.example' without new name..."
-target_hostname=testhost2.example ssh_test true 255
+target_hostname=testhost2.example ssh_test 255
 echo
 echo "##################################################"
 echo "### add servicename, certify by admin, import by user..."
@@ -571,14 +525,14 @@ echo "##################################################"
 echo "### ssh connection test with hostname 'testhost2.example' added..."
 gpgadmin --export "$SSHHOSTKEYID" | gpg --import
 gpg --check-trustdb
-ssh_test true
+ssh_test
 
 echo
 echo "##################################################"
 echo "### ssh connection test directly to 'testhost2.example' ..."
 gpg --import <"$HOST_KEY_FILE"
 gpg --check-trustdb
-target_hostname=testhost2.example ssh_test true
+target_hostname=testhost2.example ssh_test
 
 echo
 echo "##################################################"
@@ -586,17 +540,12 @@ echo "### ssh connection test for failure with 'testhost2.example' revoked..."
 monkeysphere-host revoke-servicename ssh://testhost2.example
 gpg --import <"$HOST_KEY_FILE"
 gpg --check-trustdb
-target_hostname=testhost2.example ssh_test true 255
+target_hostname=testhost2.example ssh_test 255
 
 # FIXME: addtest: remove admin as id-certifier and check ssh failure
 
 # FIXME: addtest: how do we test that set-expire makes sense after new
 # servicenames have been added?
-
-echo
-echo "##################################################"
-echo "### testing monkeysphere authentication keys-for-user"
-diff <(monkeysphere-authentication keys-for-user $(whoami) | cut -d' ' -f1,2) <(cut -d' ' -f1,2 ${MONKEYSPHERE_SYSDATADIR}/authorized_keys/${MONKEYSPHERE_MONKEYSPHERE_USER}) 
 
 # test to make sure things are OK after the previous tests:
 echo
@@ -606,13 +555,13 @@ monkeysphere-authentication update-users $(whoami)
 echo
 echo "##################################################"
 echo "### ssh connection test for success..."
-ssh_test true
+ssh_test
 
 echo
 echo "##################################################"
 echo "### Testing TLS setup..."
 
-openssl req -config "$TESTDIR"/openssl.cnf -x509 -newkey rsa:3072 -subj '/DC=example/DC=testhost/CN=testhost.example/' -days 3 -keyout "$TEMPDIR"/tls_key.pem -nodes >"$TEMPDIR"/tls_cert.pem
+openssl req -config "$TESTDIR"/openssl.cnf -x509 -newkey rsa:1024 -subj '/DC=example/DC=testhost/CN=testhost.example/' -days 3 -keyout "$TEMPDIR"/tls_key.pem -nodes >"$TEMPDIR"/tls_cert.pem
 monkeysphere-host import-key "$TEMPDIR"/tls_key.pem https://testhost.example
 
 # FIXME: how can we test this via an https client?  
@@ -630,7 +579,7 @@ monkeysphere-host revoke-key "$SSHHOSTKEYID" | gpg --import
 echo
 echo "##################################################"
 echo "### ssh connection test for failure..."
-ssh_test true 255
+ssh_test 255
 
 
 ######################################################################

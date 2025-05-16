@@ -1,205 +1,10 @@
-monkeysphere (0.44) unstable; urgency=medium
-
-  * Drop all direct use of perl (for now, we still ship
-    keytrans/openpgp2ssh/ssh2openpgp/pem2openpgp for others who
-    want it.  It will be removed in a future version, though)
-  * Use gpg's --quick-* interface (Increase GnuPG dependency
-    to >= 2.1.17, where this interface was stabilized)
-  * Drop unused keytrans subcommands
-  * Avoid risky uses of chown
-  * monkeysphere-host import can now handle ed25519 host keys
-  * Avoid a shell invocation in agent-transfer
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Sun, 19 May 2019 19:03:04 -0400
-
-monkeysphere (0.43) unstable; urgency=medium
-
-  * Depend on a modern version of GnuPG (>= 2.1.11) for --export-ssh-key
-  * Depend on OpenSSH's ssh-keygen directly for most SSH fingerprints
-  * Depend on OpenSSH >= 6.0 for ed25519 and "sshd -T"
-  * Use runuser instead of su
-  * Support Ed25519 authentication-capable subkeys for users
-  * Use https for all outbound links
-  * Clean up spelling
-  * Use 3072 bits for RSA keys everywhere by default
-  * Provide clearer error message for PEM2OPENPGP_NEWKEY
-    (Closes: #906755)
-  * Avoid locking out users unnecessarily
-    (Closes: #897366)
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Wed, 23 Jan 2019 17:42:19 -0500
-
-monkeysphere (0.42) unstable; urgency=medium
-
-  * bugfix release:
-  * use --send-keys instead of --send (closes: #908228)
-  * tests: Ensure that stale sockets don't fail socat (Closes: #899060)
-  * Remove deprecated option from test sshd config (Closes: #902320)
-  * write old-style PEM files to unbreak test suite (Closes: #909700)
-  * yet more colon fixes that escaped previous inspections
-  * fix more gnupg2 colons changes (Closes: #902367)
-  * Remove RSAAuthentication from test ssh config (Closes: #902318)
-  * clean up test suite failures when built against newer GnuPG
-  * use generic compiler (closes: #883015)
-  * make print_date_from_seconds_since_the_epoch deal better with bad input
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Tue, 16 Oct 2018 11:38:39 -0400
-
-monkeysphere (0.41) unstable; urgency=medium
-
-  * pem2openpgp now includes issuer fingerprint subpacket
-    in hashed self-sig, more compatible with GnuPG 2.1.16
-    (Closes: #846554)
-  * avoid blocking for entropy during test suite
-    (Closes: #841208)
-  * augment test suite for id certifier with a subkey, for better realism
-  * ensure that attempts to fetch primary key fingerprint only fetch
-    primary key fingerprint even if subkey fprs are emitted
-    (Closes: #846554)
-  * include $CPPFLAGS in agent-transfer build
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Wed, 12 Oct 2016 01:12:27 -0400
-
-monkeysphere (0.40) unstable; urgency=medium
-
-  * bugfix release:
-  * get tests to pass against GnuPG 2.1.15
-  * build more portably
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Wed, 12 Oct 2016 01:12:27 -0400
-
-monkeysphere (0.39) unstable; urgency=medium
-
-  * avoid warning about unused asprintf return value
-  * avoid treating src/share/common as an executable
-  * ensure that this works even if SYSSHAREDIR has whitespace
-  * Include local build of agent-transfer in $PATH (Closes: #835719)
-  * force bash as the shell during su (Closes: #827660)
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Tue, 30 Aug 2016 03:10:53 -0400
-
-monkeysphere (0.38) unstable; urgency=medium
-
-  * make tests work with modern gpg (2.1.x and later) as /usr/bin/gpg
-  * this introduces a new binary, agent-transfer, to transfer secret keys
-    from gpg-agent to ssh-agent.
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Tue, 17 May 2016 00:44:32 -0400
-
-monkeysphere (0.37) unstable; urgency=medium
-
-  * Bugfix release with minor improvements and dependency accommodations.
-  * Test openpgp2ssh functionality (closes MS #6524)
-  * use new GnuPG with-colons output
-  * accommodate changed behavior of ssh-keygen -F
-  * accommodate multiple AuthorizedKeysFile directives
-  * deal sanely with empty lines in authorized_user_ids (closes MS #6344)
-  * treat non-standard ports properly (closes MS #3402)
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Wed, 06 Aug 2014 13:23:04 -0400
-
-monkeysphere (0.36) unstable; urgency=low
-
-  * keytrans no longer confuses user IDs across different keys (closes MS
-    #2682)
-  * fetch all available keys from keyserver instead of first 5 (closes MS
-    #1046)
-  * enable openpgp2pem for keytrans (Closes: #698383)
-  * enable openpgp2spki as well
-
-  [ Jonas Smedegaard ]
-  * m-a gpg-cmd now takes its arguments as separate parameters, not as a
-    single string.
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Thu, 11 Jul 2013 13:19:45 -0400
-
-monkeysphere (0.35) upstream;
-
-  * Remove reference to USE_VALIDATION_AGENT.
-  * Fix ssh_proxycommand for marginal hosts (closes MS #2593)
-  * GnuPG should always behave as --fixed-list-mode (closes MS #2587)
-
- -- Jameson Rollins <jrollins@finestructure.net>  Fri, 29 Oct 2010 20:21:54 -0400
-
-monkeysphere (0.34) upstream;
-
-  * fix keys-for-user so that it outputs proper authorized_keys lines
-    (close MS #2550)
-  * refactor key processing for key files, greatly reducing redundant code
-    paths
-  * update authorized_keys and known_hosts in temp filess that are
-    atomically moved into place
-  * don't fail if authorized_keys file not already present (Closes: 600644)
-  * document CHECK_KEYSERVER in monkeysphere-authentication man page
-    (close MS #2556)
-
- -- Jameson Rollins <jrollins@finestructure.net>  Tue, 26 Oct 2010 10:27:01 -0400
-
-monkeysphere (0.33) upstream;
-
-  [ Daniel Kahn Gillmor ]
-  * defaulting MONKEYSPHERE_HASH_KNOWN_HOSTS to false
-    (closes MS #2483)
-
-  [ Jameson Rollins ]
-  * fix security vulnerability is parsing userids in
-    monkeysphere-authentication keys-for-user (Closes: #600304)
-  * fix failure after first invalid key in monkeysphere-authentication
-    keys-for-user (closes MS #2545)
-  * ignore command options in monkeysphere-authentication keys-for-user
-
- -- Jameson Rollins <jrollins@finestructure.net>  Fri, 15 Oct 2010 18:05:18 -0400
-
-monkeysphere (0.32) upstream;
-
-  [ Jameson Rollins ]
-  * Fix specification of install paths in all scripts and man pages
-    (closes MS #2491)
-  * Fix need for single argument to gpg_sphere (thanks Clint)
-    (closes MS #442)
-  * specify LC_ALL=C for all gpg calls
-    (closes MS #2496)
-
-  [ Micah Anderson ]
-  * fix monkeysphere-host revoke-key, which never worked properly :(
-  * add some debug output to monkeysphere-host publish-key
-    (closes MS #2289)
-
-  [ Clint Adams ]
-  * add support for options to the authorized User IDs file.  Options that
-    should apply to keys for a given User ID should be on
-    whitespace-prefixed lines immediately following that User ID.
-    (closes MS #440)
-
- -- Jameson Rollins <jrollins@finestructure.net>  Wed, 06 Oct 2010 17:41:09 -0400
-
-monkeysphere (0.31) upstream;
-
-  [ Daniel Kahn Gillmor ]
-  * support x509 anchors for monkeysphere-host, allow shared anchor
-    between m-h and m-a (closes MS #2288)
-  * do not bail or fail on m-h publish-key if the admin interactively
-    declines to publish one of the keys key (closes MS #1945)
-  * report updated expiration date upon successful conclusion of m-h
-    set-expire (closes MS #2291)
-  * added some files in examples/ to demonstrate system integration
-    with OpenSSH
-
-  [ Jameson Rollins ]
-  * add keys-for-user subcommand to monkeysphere-authentication
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Thu, 15 Jul 2010 19:20:35 -0400
-
-monkeysphere (0.30) upstream;
+monkeysphere (0.30~pre) UNRELEASED; urgency=low
 
   * changing tarball creation and packaging strategies
-  * make non-ssh parts of monkeysphere work well when openssh is not
-    installed; degrade ssh-specific parts gracefully when openssh is not
-    installed.
 
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Sat, 17 Apr 2010 16:46:52 -0400
+ -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Tue, 23 Mar 2010 13:57:31 -0400
 
-monkeysphere (0.29) upstream;
+monkeysphere (0.29) unstable; urgency=low
 
   * This is mainly a bugfix release
   * Fix man page typo about monkeysphere authorized_keys location
@@ -219,7 +24,7 @@ monkeysphere (0.29) upstream;
 
  -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Sun, 14 Mar 2010 21:00:47 -0400
 
-monkeysphere (0.28) upstream;
+monkeysphere (0.28) unstable; urgency=low
 
   * Major rework of monkeysphere-host to handle multiple host keys.  We
     also no longer assume ssh service keys.  monkeysphere-host is now a
@@ -229,7 +34,7 @@ monkeysphere (0.28) upstream;
 
  -- Jameson Rollins <jrollins@finestructure.net>  Tue, 19 Jan 2010 13:50:31 -0500
 
-monkeysphere (0.27) upstream;
+monkeysphere (0.27) unstable; urgency=low
 
   * fixed monkeysphere gen-subkey subcommand that was erroneously creating
     DSA subkeys due to unannounced change in gpg edit-key UI.  Now tests
@@ -239,7 +44,7 @@ monkeysphere (0.27) upstream;
 
  -- Jameson Rollins <jrollins@finestructure.net>  Mon, 11 Jan 2010 20:54:21 -0500
 
-monkeysphere (0.26) upstream;
+monkeysphere (0.26) unstable; urgency=low
 
   * add 'refresh-keys' subcommand to monkeysphere-authentication
   * improve marginal UI (closes MS #1141)
@@ -253,7 +58,7 @@ monkeysphere (0.26) upstream;
 
  -- Jameson Graef Rollins <jrollins@finestructure.net>  Sat, 01 Aug 2009 17:11:05 -0400
 
-monkeysphere (0.25) upstream;
+monkeysphere (0.25) unstable; urgency=low
 
   * New upstream release:
   * update/fix the marginal ui output
@@ -276,7 +81,7 @@ monkeysphere (0.25) upstream;
 
  -- Jameson Graef Rollins <jrollins@finestructure.net>  Thu, 16 Jul 2009 22:09:19 -0400
 
-monkeysphere (0.24) upstream;
+monkeysphere (0.24) unstable; urgency=low
 
   * fixed how version information is stored/retrieved
   * now uses perl-based keytrans for both pem2openpgp and openpgp2ssh
@@ -290,7 +95,7 @@ monkeysphere (0.24) upstream;
 
  -- Jameson Graef Rollins <jrollins@finestructure.net>  Tue, 03 Mar 2009 19:38:33 -0500
 
-monkeysphere (0.23) upstream;
+monkeysphere (0.23) unstable; urgency=low
 
   "The Golden Bezoar Release"
 
@@ -314,7 +119,7 @@ monkeysphere (0.23) upstream;
 
  -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Sat, 21 Feb 2009 17:51:06 -0500
 
-monkeysphere (0.22) upstream;
+monkeysphere (0.22) unstable; urgency=low
 
   [ Jameson Graef Rollins ]
   * added info log output when a new key is added to known_hosts file.
@@ -331,13 +136,13 @@ monkeysphere (0.22) upstream;
 
  -- Jameson Graef Rollins <jrollins@finestructure.net>  Fri, 28 Nov 2008 14:23:31 -0500
 
-monkeysphere (0.21) upstream;
+monkeysphere (0.21) unstable; urgency=low
 
   * move debian packaging to packaging subdirectory.
 
  -- Jameson Graef Rollins <jrollins@finestructure.net>  Sat, 15 Nov 2008 16:14:27 -0500
 
-monkeysphere (0.20) upstream;
+monkeysphere (0.20) unstable; urgency=low
 
   [ Daniel Kahn Gillmor ]
   * ensure that tempdirs are properly created, bail out otherwise instead
@@ -606,3 +411,4 @@ monkeysphere (0.1) experimental; urgency=low
   * This is experimental -- please report bugs!
 
  -- Daniel Kahn Gillmor <dkg-debian.org@fifthhorseman.net>  Thu, 19 Jun 2008 00:34:53 -0400
+

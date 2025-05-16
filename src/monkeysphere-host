@@ -8,7 +8,7 @@
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 # Micah Anderson <micah@riseup.net>
 #
-# They are Copyright 2008-2019, and are all released under the GPL,
+# They are Copyright 2008-2010, and are all released under the GPL,
 # version 3 or later.
 
 ########################################################################
@@ -19,25 +19,19 @@ set -o pipefail
 
 PGRM=$(basename $0)
 
-SYSSHAREDIR=${MONKEYSPHERE_SYSSHAREDIR:-"__SYSSHAREDIR_PREFIX__/share/monkeysphere"}
+SYSSHAREDIR=${MONKEYSPHERE_SYSSHAREDIR:-"/usr/share/monkeysphere"}
 export SYSSHAREDIR
 . "${SYSSHAREDIR}/defaultenv"
 . "${SYSSHAREDIR}/common"
+
+SYSDATADIR=${MONKEYSPHERE_SYSDATADIR:-"/var/lib/monkeysphere"}
+export SYSDATADIR
 
 # sharedir for host functions
 MHSHAREDIR="${SYSSHAREDIR}/mh"
 
 # datadir for host functions
 MHDATADIR="${SYSDATADIR}/host"
-
-# temp directory to enable sharing a temporary directory between root
-# and monkeysphere users. This is needed because on systems with
-# libpam-tmpdir, simply changing ownership/permissions on a directory
-# is not enough to share the directory. Parent directories such as
-# /tmp/user/0 will be inaccessible to monkeysphere user.
-#
-# XXX: Reusing monkeysphere-authentication's tmp directory.
-MHTMPDIR="${SYSDATADIR}/authentication/tmp"
 
 # host pub key files
 HOST_KEY_FILE="${SYSDATADIR}/host_keys.pub.pgp"
@@ -80,17 +74,17 @@ EOF
 
 # function to interact with the gpg keyring
 gpg_host() {
-    GNUPGHOME="$GNUPGHOME_HOST" LC_ALL=C gpg --no-auto-check-trustdb --trust-model=always --no-greeting --quiet --no-tty --fixed-list-mode "$@"
+    GNUPGHOME="$GNUPGHOME_HOST" gpg --no-auto-check-trustdb --no-greeting --quiet --no-tty "$@"
 }
 
 # list the info about the a key, in colon format, to stdout
 gpg_host_list_keys() {
     if [ "$1" ] ; then
-	gpg_host --list-keys --with-colons \
+	gpg_host --list-keys --with-colons --fixed-list-mode \
 	    --with-fingerprint --with-fingerprint \
 	    "$1"
     else
-	gpg_host --list-keys --with-colons \
+	gpg_host --list-keys --with-colons --fixed-list-mode \
 	    --with-fingerprint --with-fingerprint
     fi
 }
@@ -104,7 +98,7 @@ gpg_host_edit() {
 update_pgp_pub_file() {
     log debug "updating openpgp public key file '$HOST_KEY_FILE'..."
     gpg_host --export --armor --export-options export-minimal \
-        $(gpg_host --list-secret-keys --with-colons --fingerprint | awk -F: '/^fpr:/{ if (ok) { print $10 } ; ok=0 } /^sec:/{ ok=1 }') \
+        $(gpg_host --list-secret-keys --with-colons --fingerprint | grep ^fpr | cut -f10 -d:) \
         > "$HOST_KEY_FILE"
 }
 
@@ -131,15 +125,11 @@ check_service_name() {
     [ -n "$name" ] || \
         failure "You must supply a service name to check"
 
-    [[ "$name" = "${name,,}" ]] || \
+    printf '%s' "$name" | perl -n -e '($str = $_) =~ s/\s//g ; exit !(lc($str) eq $_);' || \
         failure "Not a valid service name: '$name'
 
-Service names should be canonicalized to all lower-case."
-
-    [[ "$name" = "${name//$' \n\r\t'/}" ]] || \
-        failure "Not a valid service name: '$name'
-
-Service names should not contain whitespace."
+Service names should be canonicalized to all lower-case,
+with no whitespace"
 
     [[ "$name" =~ ^[a-z0-9./:-]+$ ]] || \
         failure "Not a valid service name: '$name'
@@ -236,7 +226,7 @@ check_key_userid() {
     # match to only "unknown" user IDs (host has no need for ultimate trust)
     tmpuidMatch="uid:-:$(echo $userID | gpg_escape)"
 
-    # See whether the requested user ID is present
+    # See whether the requsted user ID is present
     gpg_host_list_keys "$keyID" | cut -f1,2,10 -d: | \
 	grep -q -x -F "$tmpuidMatch" 2>/dev/null
 }
@@ -247,7 +237,7 @@ prompt_userid_exists() {
     local fingerprint
 
     if gpgOut=$(gpg_host_list_keys "=${userID}" 2>/dev/null) ; then
-	fingerprint=$(echo "$gpgOut" | awk -F: '/^fpr:/{ if (ok) { print $10 } ; ok=0 } /^pub:/{ ok=1 }')
+	fingerprint=$(echo "$gpgOut" | grep '^fpr:' | cut -d: -f10)
 	if [ "$PROMPT" != "false" ] ; then
 	    printf "Service name '%s' is already being used by key '%s'.\nAre you sure you want to use it again? (y/N) " "$userID" "$fingerprint" >&2
 	    read OK; OK=${OK:=N}
@@ -270,22 +260,16 @@ multi_key() {
 
     check_no_keys
 
-    log debug "listing primary fingerprints from $HOST_KEY_FILE"
     local fprs=($(list_primary_fingerprints <"$HOST_KEY_FILE"))
-    log debug "obtained the following fingerprints: $fprs"
 
     if [[ -z "$1" || "$1" == '--all' ]] ; then
-	log debug "publishing all keys"
 	keys="${fprs[@]}"
     fi
-
-    log debug "using keys: $keys"
 
     for key in $keys ; do
 	if (( i++ > 0 )) ; then
 	    printf "\n"
 	fi
-	log debug "invoking $cmd $key"
 	"$cmd" "$key"
     done
 }
@@ -295,19 +279,14 @@ show_key() {
     local id="$1"
     local GNUPGHOME
     local fingerprint
+    local tmpssh
     local revokers
 
     # tmp gpghome dir
     export GNUPGHOME=$(msmktempdir)
 
-    cleanup() {
-        if type gpgconf &>/dev/null; then
-            gpgconf --kill gpg-agent
-        fi
-        rm -rf "$GNUPGHOME"
-    }
     # trap to remove tmp dir if break
-    trap cleanup EXIT
+    trap "rm -rf $GNUPGHOME" EXIT
 
     # import the host key into the tmp dir
     gpg --quiet --import <"$HOST_KEY_FILE"
@@ -315,17 +294,22 @@ show_key() {
     # get the gpg fingerprint
     if gpg --quiet --list-keys \
 	--with-colons --with-fingerprint "$id" \
-	| awk -F: '/^fpr:/{ if (ok) { print $10 } ; ok=0 } /^pub:/{ ok=1 }' > "$GNUPGHOME"/fingerprint ; then
+	| grep '^fpr:' | cut -d: -f10 > "$GNUPGHOME"/fingerprint ; then
 	fingerprint=$(cat "$GNUPGHOME"/fingerprint)
     else
 	failure "ID '$id' not found."
     fi
 
+    # create the ssh key
+    tmpssh="$GNUPGHOME"/ssh_host_key_rsa_pub
+    gpg --export --no-armor "$fingerprint" 2>/dev/null \
+	| openpgp2ssh 2>/dev/null >"$tmpssh"
+
     # list the host key info
     # FIXME: make no-show-keyring work so we don't have to do the grep'ing
     # FIXME: can we show uid validity somehow?
     gpg --list-keys --list-options show-unusable-uids "$fingerprint" 2>/dev/null \
-        | egrep -v "^${GNUPGHOME}/pubring.(gpg|kbx)$" \
+        | grep -v "^${GNUPGHOME}/pubring.gpg$" \
         | egrep -v '^-+$' \
         | grep -v '^$'
 
@@ -343,12 +327,12 @@ show_key() {
     echo "OpenPGP fingerprint: $fingerprint"
 
     # list the ssh fingerprint
-    printf "ssh fingerprint: %s\n" \
-    "$(gpg --export-ssh-key "0x${fingerprint}!" 2>/dev/null | cut -f1,2 -d' ' | sed 's/$/ ./' | ssh-keygen -l -f -)"
+    echo -n "ssh fingerprint: "
+    ssh-keygen -l -f "$tmpssh" | awk '{ print $1, $2, $4 }'
 
     # remove the tmp file
     trap - EXIT
-    cleanup
+    rm -rf "$GNUPGHOME"
 }
 
 ########################################################################
@@ -363,7 +347,6 @@ show_key() {
 # defaults
 LOG_LEVEL=${MONKEYSPHERE_LOG_LEVEL:=$LOG_LEVEL}
 KEYSERVER=${MONKEYSPHERE_KEYSERVER:=$KEYSERVER}
-log debug "using keyserver: $KEYSERVER"
 CHECK_KEYSERVER=${MONKEYSPHERE_CHECK_KEYSERVER:=$CHECK_KEYSERVER}
 MONKEYSPHERE_USER=${MONKEYSPHERE_MONKEYSPHERE_USER:=$MONKEYSPHERE_USER}
 MONKEYSPHERE_GROUP=$(get_primary_group "$MONKEYSPHERE_USER")
@@ -373,7 +356,7 @@ PROMPT=${MONKEYSPHERE_PROMPT:=$PROMPT}
 GNUPGHOME_HOST=${MONKEYSPHERE_GNUPGHOME_HOST:="${MHDATADIR}"}
 LOG_PREFIX=${MONKEYSPHERE_LOG_PREFIX:='ms: '}
 
-# export variables needed for invoking command under monkeysphere user
+# export variables needed in su invocation
 export DATE
 export LOG_LEVEL
 export KEYSERVER

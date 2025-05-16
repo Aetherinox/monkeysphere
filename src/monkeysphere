@@ -8,7 +8,7 @@
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 # Micah Anderson <micah@riseup.net>
 #
-# They are Copyright 2008-2019, and are all released under the GPL, version 3
+# They are Copyright 2008-2009, and are all released under the GPL, version 3
 # or later.
 
 ########################################################################
@@ -16,7 +16,7 @@ set -e
 
 PGRM=$(basename $0)
 
-SYSSHAREDIR=${MONKEYSPHERE_SYSSHAREDIR:-"__SYSSHAREDIR_PREFIX__/share/monkeysphere"}
+SYSSHAREDIR=${MONKEYSPHERE_SYSSHAREDIR:-"/usr/share/monkeysphere"}
 export SYSSHAREDIR
 . "${SYSSHAREDIR}/defaultenv"
 . "${SYSSHAREDIR}/common"
@@ -49,10 +49,10 @@ subcommands:
    --no-connect                        do not make TCP connection to host
  subkey-to-ssh-agent (s)             store authentication subkey in ssh-agent
 
- keys-for-userid (u) USERID          output valid ssh keys for given user id
- sshfprs-for-userid USERID           output ssh fingerprints for given user id
+ keys-for-userid (u) USERID          output valid keys for given user ids
+ sshfprs-for-userid USERID           output ssh fingerprints for given user ids
  gen-subkey (g) [KEYID]              generate an authentication subkey
-   --length (-l) BITS                  RSA key length in bits (3072)
+   --length (-l) BITS                  key length in bits (2048)
 
  version (v)                         show version number
  help (h,?)                          this help
@@ -62,13 +62,24 @@ EOF
 
 # user gpg command to define common options
 gpg_user() {
-    LC_ALL=C "${GPG:-gpg}" --fixed-list-mode --no-greeting --quiet --no-tty "$@"
+    gpg --no-greeting --quiet --no-tty "$@"
 }
 
 # output the ssh fingerprint of a gpg key
 gpg_ssh_fingerprint() {
     keyid="$1"
-    gpg_user --export-ssh-key "0x${keyid}!" | cut -f1,2 -d' ' | sed 's/$/ ./' | ssh-keygen -l -f -
+    local tmpfile=$(msmktempfile)
+
+    # trap to remove tmp file if break
+    trap "rm -f $tmpfile" EXIT
+
+    # use temporary file, since ssh-keygen won't accept keys on stdin
+    gpg_user --export "$keyid" --no-armor | openpgp2ssh "$keyid" >"$tmpfile"
+    ssh-keygen -l -f "$tmpfile" | awk '{ print $1, $2, $4 }'
+
+    # remove the tmp file
+    trap - EXIT
+    rm -rf "$tmpfile"
 }
 
 # take a secret key ID and check that only zero or one ID is provided,
@@ -78,10 +89,10 @@ check_gpg_sec_key_id() {
 
     case "$#" in
 	0)
-	    gpgSecOut=$(gpg_user --list-secret-keys --with-colons 2>/dev/null | egrep '^sec:')
+	    gpgSecOut=$(gpg_user --fixed-list-mode --list-secret-keys --with-colons 2>/dev/null | egrep '^sec:')
 	    ;;
 	1)
-	    gpgSecOut=$(gpg_user --list-secret-keys --with-colons "$1" | egrep '^sec:') || failure
+	    gpgSecOut=$(gpg_user --fixed-list-mode --list-secret-keys --with-colons "$1" | egrep '^sec:') || failure
 	    ;;
 	*)
 	    failure "You must specify only a single primary key ID."
@@ -119,7 +130,7 @@ check_gpg_authentication_subkey() {
 
     # check that a valid authentication key does not already exist
     IFS=$'\n'
-    for line in $(gpg_user --list-keys --with-colons "$keyID") ; do
+    for line in $(gpg_user --fixed-list-mode --list-keys --with-colons "$keyID") ; do
 	type=$(echo "$line" | cut -d: -f1)
 	validity=$(echo "$line" | cut -d: -f2)
 	usage=$(echo "$line" | cut -d: -f12)
@@ -156,7 +167,7 @@ check_gpg_authentication_subkey() {
 # set unset default variables
 GNUPGHOME=${GNUPGHOME:="${HOME}/.gnupg"}
 KNOWN_HOSTS="${HOME}/.ssh/known_hosts"
-HASH_KNOWN_HOSTS="false"
+HASH_KNOWN_HOSTS="true"
 AUTHORIZED_KEYS="${HOME}/.ssh/authorized_keys"
 
 # unset the check keyserver variable, since that needs to have
@@ -211,10 +222,6 @@ if [ "$#" -eq 0 ] ; then
     failure "Please supply a subcommand."
 fi
 
-if ! is_gpg_version_greater_equal 2.1.11 ; then
-    failure "Monkeysphere needs GnuPG >= 2.1.11"
-fi
-
 # get subcommand
 COMMAND="$1"
 shift
@@ -223,8 +230,6 @@ case $COMMAND in
     'update-known_hosts'|'update-known-hosts'|'k')
 	# whether or not to check keyservers
 	CHECK_KEYSERVER=${MONKEYSPHERE_CHECK_KEYSERVER:=${CHECK_KEYSERVER:="true"}}
-
-	source "${MSHAREDIR}/update_known_hosts"
 
 	# if hosts are specified on the command line, process just
 	# those hosts
@@ -241,12 +246,14 @@ case $COMMAND in
     'update-authorized_keys'|'update-authorized-keys'|'a')
 	# whether or not to check keyservers
 	CHECK_KEYSERVER=${MONKEYSPHERE_CHECK_KEYSERVER:=${CHECK_KEYSERVER:="true"}}
-	source "${MSHAREDIR}/update_authorized_keys"
-	update_authorized_keys
+
+	# process authorized_user_ids file
+	process_authorized_user_ids "$AUTHORIZED_USER_IDS"
 	;;
 
     'import-subkey'|'import'|'i')
-        failure "import-subkey is not implemented yet. (see https://dev.gnupg.org/T4489)"
+	source "${MSHAREDIR}/import_subkey"
+	import_subkey "$@"
 	;;
 
     'gen-subkey'|'g')
@@ -271,20 +278,27 @@ case $COMMAND in
 
     'keys-for-userid'|'u')
 	CHECK_KEYSERVER=${MONKEYSPHERE_CHECK_KEYSERVER:=${CHECK_KEYSERVER:="true"}}
-	source "${MSHAREDIR}/keys_for_userid"
 	keys_for_userid "$@"
 	;;
 
     'sshfprs-for-userid')
 	CHECK_KEYSERVER=${MONKEYSPHERE_CHECK_KEYSERVER:=${CHECK_KEYSERVER:="true"}}
-	source "${MSHAREDIR}/keys_for_userid"
-	keys_for_userid "$@" | ssh-keygen -l -f - | awk '{ print $2 }'
+        keytmpdir=$(msmktempdir)
+        # use a file named " " to avoid arbitrary non-whitespace text
+        # in the fingerprint output
+        keytmpfile="$keytmpdir/ "
+        cd "$keytmpdir"
+	keys_for_userid "$@" | while read KEYLINE ; do
+            printf '%s\n' "$KEYLINE" > "$keytmpdir/ "
+            ssh-keygen -l -f ' '
+        done
+        rm -f "$keytmpfile"
+        rmdir "$keytmpdir"
 	;;
 
     'keys-from-userid')
 	echo "Warning: 'keys-from-userid' is deprecated.  Please use 'keys-for-userid' instead." >&2
 	CHECK_KEYSERVER=${MONKEYSPHERE_CHECK_KEYSERVER:=${CHECK_KEYSERVER:="true"}}
-	source "${MSHAREDIR}/keys_for_userid"
 	keys_for_userid "$@"
 	;;
 
