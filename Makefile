@@ -73,11 +73,6 @@ install: all installman
 	install src/monkeysphere-authentication-keys-for-user $(DESTDIR)$(PREFIX)/share/monkeysphere
 	install -m 0644 src/share/common $(DESTDIR)$(PREFIX)/share/monkeysphere
 	install -m 0644 replaced/src/share/defaultenv $(DESTDIR)$(PREFIX)/share/monkeysphere
-	install -m 0755 src/share/keytrans $(DESTDIR)$(PREFIX)/share/monkeysphere
-	ln -sf ../share/monkeysphere/keytrans $(DESTDIR)$(PREFIX)/bin/pem2openpgp
-	ln -sf ../share/monkeysphere/keytrans $(DESTDIR)$(PREFIX)/bin/openpgp2ssh
-	ln -sf ../share/monkeysphere/keytrans $(DESTDIR)$(PREFIX)/bin/openpgp2pem
-	ln -sf ../share/monkeysphere/keytrans $(DESTDIR)$(PREFIX)/bin/openpgp2spki
 	install -m 0755 src/agent-transfer/agent-transfer $(DESTDIR)$(PREFIX)/bin
 	install -m 0744 replaced/src/transitions/* $(DESTDIR)$(PREFIX)/share/monkeysphere/transitions
 	install -m 0644 src/transitions/README.txt $(DESTDIR)$(PREFIX)/share/monkeysphere/transitions
@@ -96,15 +91,13 @@ installman: $(REPLACED_COMPRESSED_MANPAGES)
 	install replaced/man/man1/* $(DESTDIR)$(MANPREFIX)/man1
 	install replaced/man/man7/* $(DESTDIR)$(MANPREFIX)/man7
 	install replaced/man/man8/* $(DESTDIR)$(MANPREFIX)/man8
-	ln -sf openpgp2ssh.1.gz $(DESTDIR)$(MANPREFIX)/man1/openpgp2pem.1.gz
-	ln -sf openpgp2ssh.1.gz $(DESTDIR)$(MANPREFIX)/man1/openpgp2spki.1.gz
 
 # this target depends on you having the monkeysphere-docs
 # repo checked out as a peer of your monkeysphere repo.
 releasenote:
-	../monkeysphere-docs/util/build-releasenote
+	../monkeysphere-docs/utils/build-releasenote
 
-test: test-keytrans test-basic test-ed25519
+test: test-basic test-ed25519
 
 check: test
 
@@ -113,8 +106,5 @@ test-basic: src/agent-transfer/agent-transfer
 
 test-ed25519: src/agent-transfer/agent-transfer
 	MONKEYSPHERE_TEST_NO_EXAMINE=true MONKEYSPHERE_TEST_USE_ED25519=true ./tests/basic
-
-test-keytrans: src/agent-transfer/agent-transfer
-	MONKEYSPHERE_TEST_NO_EXAMINE=true ./tests/keytrans
 
 .PHONY: all tarball debian-package freebsd-distinfo clean install installman releasenote test check

@@ -1,17 +1,3 @@
-monkeysphere (0.44) unstable; urgency=medium
-
-  * Drop all direct use of perl (for now, we still ship
-    keytrans/openpgp2ssh/ssh2openpgp/pem2openpgp for others who
-    want it.  It will be removed in a future version, though)
-  * Use gpg's --quick-* interface (Increase GnuPG dependency
-    to >= 2.1.17, where this interface was stabilized)
-  * Drop unused keytrans subcommands
-  * Avoid risky uses of chown
-  * monkeysphere-host import can now handle ed25519 host keys
-  * Avoid a shell invocation in agent-transfer
-
- -- Daniel Kahn Gillmor <dkg@fifthhorseman.net>  Sun, 19 May 2019 19:03:04 -0400
-
 monkeysphere (0.43) unstable; urgency=medium
 
   * Depend on a modern version of GnuPG (>= 2.1.11) for --export-ssh-key

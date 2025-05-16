@@ -11,7 +11,7 @@
 
  * create debian-specific version tag:
 
-    git tag -s -m "Tagging Monkeysphere $version-1" monkeysphere_debian/$version-1 debian/master
+    git tag -s -m "Tagging Monkeysphere $version-1" monkeysphere_$version-1 debian/master
 
  * make releasenote
 
