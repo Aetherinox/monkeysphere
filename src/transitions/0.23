@@ -20,9 +20,8 @@
 # any unexpected errors should cause this script to bail:
 set -e
 
-SYSSHAREDIR=${MONKEYSPHERE_SYSSHAREDIR:-"__SYSSHAREDIR_PREFIX__/share/monkeysphere"}
-export SYSSHAREDIR
-. "${SYSSHAREDIR}/defaultenv"
+SYSDATADIR=${MONKEYSPHERE_SYSDATADIR:-"/var/lib/monkeysphere"}
+SYSCONFIGDIR=${MONKEYSPHERE_SYSCONFIGDIR:-"/etc/monkeysphere"}
 
 MADATADIR="${SYSDATADIR}/authentication"
 MHDATADIR="${SYSDATADIR}/host"

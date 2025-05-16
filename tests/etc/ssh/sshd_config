@@ -19,4 +19,5 @@ PrintLastLog no
 TCPKeepAlive no
 AcceptEnv LANG LC_*
 UsePAM no
+UsePrivilegeSeparation no
 LogLevel DEBUG

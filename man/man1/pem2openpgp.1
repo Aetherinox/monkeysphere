@@ -1,5 +1,5 @@
 .\"  -*- nroff -*-
-.Dd $Mdocdate: Jan 22, 2019 $
+.Dd $Mdocdate: March 1, 2009 $
 .Dt PEM2OPENPGP 1
 .Os
 .Sh NAME
@@ -60,7 +60,7 @@ default, no expiration subpacket is included.
 .Nm
 should ignore stdin, and instead generate a new key internally and
 build the certificate based on this new key.  Set this variable to the
-number of bits for the new RSA key (e.g. 3072).  By default (when this is
+number of bits for the new key (e.g. 2048).  By default (when this is
 unset), 
 .Nm
 will read the key from stdin.
@@ -85,7 +85,7 @@ passphrase.
 If you find other bugs, please report them at
 https://labs.riseup.net/code/projects/show/monkeysphere
 .Sh SEE ALSO
-.Xr openpgp2ssh 1 ,
+.Xr openpgp2ssh 1,
 .Xr monkeysphere 1 ,
 .Xr monkeysphere 7 ,
 .Xr ssh 1 ,

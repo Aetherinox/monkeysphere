@@ -8,7 +8,7 @@
 # Jamie McClelland <jm@mayfirst.org>
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 #
-# They are Copyright 2008-2019, and are all released under the GPL,
+# They are Copyright 2008-2009, and are all released under the GPL,
 # version 3 or later.
 
 # generate a subkey with the 'a' usage flags set
@@ -44,8 +44,23 @@ Type '$PGRM help' for usage."
     # check that an authentication subkey does not already exist
     check_gpg_authentication_subkey "$keyID"
 
-    # since GnuPG 2.0.13, we use keyType = 8.
-    keyType=8
+    # determine which keyType to use from gpg version
+    keyType=7
+    case $(gpg --version | head -1 | awk '{ print $3 }' | cut -d. -f1) in
+	1)
+	    if is_gpg_version_greater_equal 1.4.10 ; then
+		keyType=8
+	    fi
+	    ;;
+	2)
+	    if is_gpg_version_greater_equal 2.0.13 ; then
+		keyType=8
+	    fi
+	    ;;
+	*)
+	    keyType=8
+	    ;;
+    esac
 
     # generate the list of commands that will be passed to edit-key
     editCommands="addkey
@@ -65,7 +80,7 @@ save"
 
     # FIXME: are we adequately cleaning up any trailing gpg process here?
     trap "rm -rf $fifoDir; kill %% || true" EXIT
-    echo "$editCommands" | gpg_user --batch --passphrase-fd 3 3< "$fifoDir/pass" --expert --command-fd 0 --edit-key "$keyID" &
+    echo "$editCommands" | gpg_user --passphrase-fd 3 3< "$fifoDir/pass" --expert --command-fd 0 --edit-key "$keyID" &
 
     log debug "Prompting for passphrase"
     # FIXME: this needs to fail more gracefully if the passphrase is incorrect

@@ -36,7 +36,7 @@
 # Example usage:
 
 # gpg --export-secret-subkeys --export-options export-reset-subkey-passwd $KEYID | \
-#  openpgp2ssh $KEYID | ssh-add -
+#  openpgp2ssh $KEYID | ssh-add /dev/stdin
 
 
 # Authors:
@@ -184,7 +184,6 @@ my $subpacket_types = { sig_creation_time => 2,
 			features => 30,
 			signature_target => 31,
 			embedded_signature => 32,
-			issuer_fpr => 33,
 		       };
 
 # bitstring (see RFC 4880 section 5.2.3.24)
@@ -204,7 +203,7 @@ my $keyserver_prefs = { nomodify => 0x80
 ########### Math/Utility Functions ##############
 
 
-# see the bottom of page 44 of RFC 4880 (https://tools.ietf.org/html/rfc4880#page-44)
+# see the bottom of page 44 of RFC 4880 (http://tools.ietf.org/html/rfc4880#page-44)
 sub simple_checksum {
   my $bytes = shift;
 
@@ -212,9 +211,17 @@ sub simple_checksum {
 }
 
 
+# calculate/print the fingerprint of an openssh-style keyblob:
+
+sub sshfpr {
+  my $keyblob = shift;
+  use Digest::MD5;
+  return join(':', map({unpack("H*", $_)} split(//, Digest::MD5::md5($keyblob))));
+}
+
 # calculate the multiplicative inverse of a mod b this is euclid's
 # extended algorithm.  For more information see:
-# https://en.wikipedia.org/wiki/Extended_Euclidean_algorithm the
+# http://en.wikipedia.org/wiki/Extended_Euclidean_algorithm the
 # arguments here should be Crypt::OpenSSL::Bignum objects.  $a should
 # be the larger of the two values, and the two values should be
 # coprime.
@@ -328,7 +335,7 @@ sub mpi_pack {
 
 # takes a Crypt::OpenSSL::Bignum, returns an MPI packed in preparation
 # for an OpenSSH-style public key format.  see:
-# https://marc.info/?l=openssh-unix-dev&m=121866301718839&w=2
+# http://marc.info/?l=openssh-unix-dev&m=121866301718839&w=2
 sub openssh_mpi_pack {
   my $num = shift;
 
@@ -563,13 +570,10 @@ sub gensig {
   if ($key_timestamp > $sig_timestamp) {
     die "key timestamp must not be later than signature timestamp\n";
   }
-  my $v4_fpr = fingerprint($rsa, $key_timestamp);
 
   my $creation_time_packet = pack('CCN', 5, $subpacket_types->{sig_creation_time}, $sig_timestamp);
 
-  my $issuer_fpr_packet = pack('CCCa20', 22, $subpacket_types->{issuer_fpr}, 4, $v4_fpr);
-
-  my $hashed_subs = $issuer_fpr_packet.$creation_time_packet.$args->{hashed_subpackets};
+  my $hashed_subs = $creation_time_packet.$args->{hashed_subpackets};
 
   my $subpacket_octets = pack('n', length($hashed_subs));
 
@@ -589,7 +593,7 @@ sub gensig {
   my $key_data = make_packet($packet_types->{pubkey}, $pubkey, {'packet_length'=>2});
 
   # take the last 8 bytes of the fingerprint as the keyid:
-  my $keyid = substr($v4_fpr, 20 - 8, 8);
+  my $keyid = substr(fingerprint($rsa, $key_timestamp), 20 - 8, 8);
 
   # the v4 signature trailer is:
 
@@ -666,11 +670,9 @@ sub findsig {
     return;
   }
 
-  if ( (!defined($data->{current_key_match})) ||
-       (! $data->{current_key_match})) {
-    # this is not the key in question.
-    return;
-  }
+  # FIXME: if we get two primary keys on stdin, both with the same
+  # targetd user ID, we'll store signatures from both keys, which is
+  # probably wrong.
 
   # the current ID is not what we're looking for:
   return if ($data->{current}->{uid} ne $data->{target}->{uid});
@@ -729,7 +731,7 @@ sub findkey {
   my $foundfprstr = Crypt::OpenSSL::Bignum->new_from_bin($foundfpr)->to_hex();
   # left-pad with 0's to bring up to full 40-char (160-bit) fingerprint:
   $foundfprstr = sprintf("%040s", $foundfprstr);
-  $data->{current_key_match} = 0;
+  my $matched = 0;
 
   # is this a match?
   if ((!defined($data->{target}->{fpr})) ||
@@ -739,7 +741,7 @@ sub findkey {
     }
     $data->{key} = { 'rsa' => $pubkey,
 		     'timestamp' => $key_timestamp };
-    $data->{current_key_match} = 1;
+    $matched = 1;
   }
 
   if ($tag != $packet_types->{seckey} &&
@@ -749,7 +751,7 @@ sub findkey {
     }
     return;
   }
-  if (!$data->{current_key_match}) {
+  if (!$matched) {
     # we don't think the public part of this key matches
     if ($readbytes < $packetlen) {
       read($instr, $dummy, $packetlen - $readbytes) or die "Could not skip past this packet.\n";
@@ -768,7 +770,7 @@ sub findkey {
   }
 
   # secret material is unencrypted
-  # see https://tools.ietf.org/html/rfc4880#section-5.5.3
+  # see http://tools.ietf.org/html/rfc4880#section-5.5.3
   my $d = read_mpi($instr, \$readbytes);
   my $p = read_mpi($instr, \$readbytes);
   my $q = read_mpi($instr, \$readbytes);
@@ -835,6 +837,162 @@ sub findkeyfprs {
     undef($data->{key});
   }
 };
+
+sub getallprimarykeys {
+  my $instr = shift;
+
+  my $subs = { $packet_types->{pubkey} => \&findkeyfprs,
+               $packet_types->{seckey} => \&findkeyfprs,
+	     };
+  my $data = {target => { } };
+
+  packetwalk($instr, $subs, $data);
+
+  if (defined $data->{keys}) {
+    return $data->{keys};
+  } else {
+    return {};
+  }
+}
+
+sub adduserid {
+  my $instr = shift;
+  my $fpr = shift;
+  my $uid = shift;
+  my $args = shift;
+
+  if ((! defined $fpr) ||
+      (length($fpr) < 8)) {
+    die "We need at least 8 hex digits of fingerprint.\n";
+  }
+
+  $fpr = uc($fpr);
+
+  if (! defined $uid) {
+    die "No User ID defined.\n";
+  }
+
+  my $data = { target => { fpr => $fpr,
+			   uid => $uid,
+			 },
+	     };
+  my $subs = { $packet_types->{seckey} => \&findkey,
+	       $packet_types->{uid} => \&finduid,
+	       $packet_types->{sig} => \&findsig,
+	     };
+
+  packetwalk($instr, $subs, $data);
+
+  if ((! defined $data->{key}) ||
+      (! defined $data->{key}->{rsa}) ||
+      (! defined $data->{key}->{timestamp})) {
+    die "The key requested was not found.\n"
+  }
+
+  if (defined $data->{uid}->{$uid}) {
+    die "The requested User ID '$uid' is already associated with this key.\n";
+  }
+  $args->{key_timestamp} = $data->{key}->{timestamp};
+
+  return
+    make_packet($packet_types->{pubkey}, make_rsa_pub_key_body($data->{key}->{rsa}, $data->{key}->{timestamp})).
+      make_packet($packet_types->{uid}, $uid).
+	makeselfsig($data->{key}->{rsa},
+		    $uid,
+		    $args);
+
+}
+
+
+sub revokeuserid {
+  my $instr = shift;
+  my $fpr = shift;
+  my $uid = shift;
+  my $sigtime = shift;
+
+  if ((! defined $fpr) ||
+      (length($fpr) < 8)) {
+    die "We need at least 8 hex digits of fingerprint.\n";
+  }
+
+  $fpr = uc($fpr);
+
+  if (! defined $uid) {
+    die "No User ID defined.\n";
+  }
+
+  my $data = { target => { fpr => $fpr,
+			   uid => $uid,
+			 },
+	     };
+  my $subs = { $packet_types->{seckey} => \&findkey,
+	       $packet_types->{uid} => \&finduid,
+	       $packet_types->{sig} => \&findsig,
+	     };
+
+  packetwalk($instr, $subs, $data);
+
+  if ((! defined $data->{uid}) ||
+      (! defined $data->{uid}->{$uid})) {
+    die "The User ID \"$uid\" is not associated with this key";
+  }
+
+  if ((! defined $data->{key}) ||
+      (! defined $data->{key}->{rsa}) ||
+      (! defined $data->{key}->{timestamp})) {
+    die "The key requested was not found."
+  }
+
+  my $revocation_reason = 'No longer using this hostname';
+  if (defined $data->{revocation_reason}) {
+    $revocation_reason = $data->{revocation_reason};
+  }
+
+  my $rev_reason_subpkt = prefixsubpacket(pack('CC',
+					       $subpacket_types->{revocation_reason},
+					       $revocation_reasons->{user_id_no_longer_valid}).
+					  $revocation_reason);
+
+  if (! defined $sigtime) {
+    $sigtime = time();
+  }
+  # what does a signature like this look like?
+  my $args = { key_timestamp => $data->{key}->{timestamp},
+	       sig_timestamp => $sigtime,
+	       certification_type => $sig_types->{certification_revocation},
+	       hashed_subpackets => $rev_reason_subpkt,
+	     };
+
+  return
+    make_packet($packet_types->{pubkey}, make_rsa_pub_key_body($data->{key}->{rsa}, $data->{key}->{timestamp})).
+      make_packet($packet_types->{uid}, $uid).
+	join('', @{$data->{sigs}}).
+	  gensig($data->{key}->{rsa}, $uid, $args);
+}
+
+
+# see 5.2.3.1 for tips on how to calculate the length of a subpacket:
+sub prefixsubpacket {
+  my $subpacket = shift;
+
+  my $len = length($subpacket);
+  my $prefix;
+  use bytes;
+  if ($len < 192) {
+    # one byte:
+    $prefix = pack('C', $len);
+  } elsif ($len < 16576) {
+    my $in = $len - 192;
+    my $second = $in%256;
+    my $first = ($in - $second)>>8;
+    $prefix = pack('CC', $first + 192, $second)
+  } else {
+    $prefix = pack('CN', 255, $len);
+  }
+  return $prefix.$subpacket;
+}
+
+
 
 sub packetwalk {
   my $instr = shift;
@@ -918,9 +1076,7 @@ for (basename($0)) {
     # hostname_long() from Sys::Hostname::Long ?
 
     if (defined $ENV{PEM2OPENPGP_NEWKEY}) {
-      my $rsa_keysize = ($ENV{PEM2OPENPGP_NEWKEY} + 0);
-      $rsa_keysize >= 2048 or die "Generating new RSA key: PEM2OPENPGP_NEWKEY should be at least 2048\n";
-      $rsa = Crypt::OpenSSL::RSA->generate_key($rsa_keysize);
+      $rsa = Crypt::OpenSSL::RSA->generate_key($ENV{PEM2OPENPGP_NEWKEY});
     } else {
       $stdin = do {
 	local $/; # slurp!
@@ -963,40 +1119,70 @@ for (basename($0)) {
 	die "No matching key found.\n";
       }
   }
-  elsif (/^openpgp2pem$/) {
-      my $fpr = shift;
-      my $instream;
-      open($instream,'-');
-      binmode($instream, ":bytes");
-      my $key = openpgp2rsa($instream, $fpr);
-      if (defined($key)) {
-	if ($key->is_private()) {
-	  print $key->get_private_key_string();
-	} else {
-	  print $key->get_public_key_string();
-	}
-      } else {
-	die "No matching key found.\n";
-      }
-  }
-  elsif (/^openpgp2spki$/) {
-      my $fpr = shift;
-      my $instream;
-      open($instream,'-');
-      binmode($instream, ":bytes");
-      my $key = openpgp2rsa($instream, $fpr);
-      if (defined($key)) {
-        print $key->get_public_key_x509_string();
-      } else {
-	die "No matching key found.\n";
-      }
-  }
   elsif (/^keytrans$/) {
     # subcommands when keytrans is invoked directly are UNSUPPORTED,
     # UNDOCUMENTED, and WILL NOT BE MAINTAINED.
-    die "Unrecognized subcommand.  keytrans subcommands are not a stable interface!\n";
+    my $subcommand = shift;
+    for ($subcommand) {
+      if (/^revokeuserid$/) {
+	my $fpr = shift;
+	my $uid = shift;
+	my $instream;
+	open($instream,'-');
+	binmode($instream, ":bytes");
+
+	my $revcert = revokeuserid($instream, $fpr, $uid, $ENV{PEM2OPENPGP_TIMESTAMP});
+
+	print $revcert;
+      } elsif (/^adduserid$/) {
+	my $fpr = shift;
+	my $uid = shift;
+	my $instream;
+	open($instream,'-');
+	binmode($instream, ":bytes");
+	my $newuid = adduserid($instream, $fpr, $uid, 
+			       { sig_timestamp => $ENV{PEM2OPENPGP_TIMESTAMP},
+				 expiration => $ENV{PEM2OPENPGP_EXPIRATION},
+				 usage_flags => $ENV{PEM2OPENPGP_USAGE_FLAGS},
+			       });
+
+	print $newuid;
+      } elsif (/^listfprs$/) {
+        my $instream;
+	open($instream,'-');
+	binmode($instream, ":bytes");
+        my $keys = getallprimarykeys($instream);
+        printf("%s\n", join("\n", map { uc(unpack('H*', $_)) } keys(%{$keys})));
+      } elsif (/^sshfpr$/) {
+        use MIME::Base64;
+        my $b64keyblob;
+        my $dummy;
+        while (($dummy,$b64keyblob) = split(/ /, <STDIN>)) {
+          printf("%s\n", sshfpr(decode_base64($b64keyblob)));
+        }
+      } elsif (/^openpgp2sshfpr$/) {
+        my $fpr = shift;
+        my $instream;
+        open($instream,'-');
+        binmode($instream, ":bytes");
+        my $key = openpgp2rsa($instream, $fpr);
+        if (defined($key)) {
+          # openssh uses MD5 for key fingerprints:
+          printf("%d %s %s\n",
+                 $key->size() * 8, # size() is in bytes -- we want bits
+                 sshfpr(openssh_pubkey_pack($key)),
+                 '(RSA)', # FIXME when we support other than RSA.
+                );
+        } else {
+          die "No matching key found.\n";
+        }
+      } else {
+	die "Unrecognized subcommand.  keytrans subcommands are not a stable interface!\n";
+      }
+    }
   }
   else {
     die "Unrecognized keytrans call.\n";
   }
 }
+

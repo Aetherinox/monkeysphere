@@ -7,7 +7,7 @@
 #   Jameson Rollins <jrollins@fifthhorseman.net>
 #   Micah Anderson <micah@riseup.net> 
 #
-# Copyright: 2008-2019
+# Copyright: 2008-2009
 # License: GPL v3 or later
 
 # these tests should all be able to run as a non-privileged user.
@@ -16,14 +16,6 @@
 set -e
 # piped commands should return the code of the first non-zero return
 set -o pipefail
-
-declare -a child_procs=($(ps -o pid h --ppid $$))
-if [ "${#child_procs[@]}" -gt 1 ]; then
-    printf 'found %d pre-existing child processes: %s\n' "${#child_procs[@]}" "${child_procs[*]}"
-    printf "spawning my own subprocess to avoid https://bugs.debian.org/920038...\n"
-    "$0" "$@"
-    exit
-fi
 
 # make sure the TESTDIR is an absolute path, not a relative one.
 export TESTDIR=$(cd $(dirname "$0") && pwd)
@@ -46,20 +38,16 @@ On debian-derived systems, you can set this up with:
 ## the tests, not system-wide:
 
 mkdir -p "$TESTDIR"/tmp
-TEMPDIR=$(mktemp -d "${TMPDIR:-$TESTDIR/tmp}/ms.XXX")
+TEMPDIR=$(mktemp -d "${TMPDIR:-$TESTDIR/tmp}/monkeyspheretest.XXXXXXX")
 
-if [ -z "$MONKEYSPHERE_TEST_USE_SYSTEM" ] ; then
-    mkdir "$TEMPDIR"/bin
-    ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/openpgp2ssh
-    ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/pem2openpgp
-    ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/keytrans
+mkdir "$TEMPDIR"/bin
+ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/openpgp2ssh
+ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/pem2openpgp
+ln -s "$TESTDIR"/../src/share/keytrans "$TEMPDIR"/bin/keytrans
 
-    # Use the local copy of executables first, instead of system ones.
-    # This should help us test without installing.
-    export PATH="$TEMPDIR"/bin:"$PATH"
-else
-    export PATH=/usr/share/monkeysphere:"$PATH"
-fi
+# Use the local copy of executables first, instead of system ones.
+# This should help us test without installing.
+export PATH="$TEMPDIR"/bin:"$PATH"
 
 ## setup trap
 trap failed_cleanup EXIT
@@ -78,38 +66,31 @@ cat > "$TEMPDIR"/gpg.conf <<EOF
 default-preference-list SHA512 SHA384 SHA256 SHA224 RIPEMD160 SHA1 ZLIB BZIP2 ZIP AES256 AES192 AES CAST5 3DES
 cert-digest-algo SHA256
 list-options show-uid-validity,show-unusable-uids
-fixed-list-mode
-EOF
-
-cat > "$TEMPDIR"/gpg-agent.conf <<EOF
-pinentry-program $TESTDIR/phony-pinentry-nopass
 EOF
 
 # generate a key
 gpg --batch --$(get_gpg_prng_arg) --gen-key <<EOF
 Key-Type: RSA
-Key-Length: 3072
+Key-Length: 1024
 Key-Usage: sign
 Name-Real: testtest
 Expire-Date: 0
 
-%no-ask-passphrase
-%no-protection
 %commit
 %echo done
 EOF
 
 echo "##################################################"
 echo "### retrieving key timestamp..."
-timestamp=$(gpg --list-key --with-colons | \
+timestamp=$(gpg --list-key --with-colons --fixed-list-mode | \
     grep ^pub: | cut -d: -f6)
 
 echo "##################################################"
 echo "### exporting key to ssh file..."
-gpg --export-secret-keys | openpgp2ssh > \
+gpg --export-secret-key | openpgp2ssh > \
     "$TEMPDIR"/test.pem
 
-gpg --export-secret-keys > "$TEMPDIR"/secret.key
+gpg --export-secret-key > "$TEMPDIR"/secret.key
 
 PEM2OPENPGP_USAGE_FLAGS=sign,certify \
 PEM2OPENPGP_TIMESTAMP="$timestamp" pem2openpgp testtest \
@@ -125,7 +106,7 @@ diff -u \
     <(hd "$TEMPDIR"/secret.key) \
     <(hd "$TEMPDIR"/converted.secret.key)
 
-KEYFPR=$(gpg --fingerprint --with-colons --list-keys | awk -F: '/^fpr:/{ if (ok) { print $10 } ; ok=0 } /^pub:/{ ok=1 }')
+KEYFPR=$(gpg --fingerprint --with-colons --list-keys | grep ^fpr | cut -f10 -d:)
 KEYID=$(printf "%s" "$KEYFPR" | cut -b25-40)
 
 echo "conversions look good!"
@@ -137,34 +118,92 @@ gpg --list-keys
 
 
 echo "##################################################"
+echo "### test User ID addition..."
+< "$TEMPDIR"/secring.gpg \
+PEM2OPENPGP_TIMESTAMP="$timestamp" \
+    PEM2OPENPGP_USAGE_FLAGS=sign,certify \
+    keytrans adduserid "$KEYID" "monkeymonkey" | gpg --import
+
+gpg --check-trustdb
+gpg --list-keys
+
+cat >"$TEMPDIR"/expectedout <<EOF
+pub:u:1024:1:$KEYID:$timestamp:::u:::scSC:
+uid:u::::$timestamp::E90EC72E68C6C2A0751DADC70F54F60D27B88C3D::monkeymonkey:
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:
+uid:u::::$timestamp::8200BD0425CC70C7D698DF3FE412044EAAB83F94::testtest:
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:
+EOF
+
+diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons --fixed-list-mode | grep -v ^tru)
+
+echo "##################################################"
+echo "### test User ID revocation ... "
+
+revtime=$(($timestamp + 1))
+
+< "$TEMPDIR"/secring.gpg \
+PEM2OPENPGP_TIMESTAMP="$revtime" \
+    keytrans revokeuserid "$KEYID" "testtest" | gpg --import
+
+gpg --check-trustdb
+gpg --list-keys
+
+cat >"$TEMPDIR"/expectedout <<EOF
+pub:u:1024:1:$KEYID:$timestamp:::u:::scSC:
+uid:u::::$timestamp::E90EC72E68C6C2A0751DADC70F54F60D27B88C3D::monkeymonkey:
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:
+uid:r::::::8200BD0425CC70C7D698DF3FE412044EAAB83F94::testtest:
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:
+rev:!::1:$KEYID:$revtime::::monkeymonkey:30x:
+EOF
+
+
+diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons --fixed-list-mode | grep -v ^tru)
+
+
+echo "##################################################"
 echo "### test working with two primary keys ... "
 
-ssh-keygen -m PEM -t rsa -b 3072 -N '' -f "$TEMPDIR"/newkey
+ssh-keygen -t rsa -b 1024 -N '' -f "$TEMPDIR"/newkey
 
 PEM2OPENPGP_USAGE_FLAGS=authenticate,certify \
 PEM2OPENPGP_TIMESTAMP="$(( $timestamp + 1 ))" pem2openpgp fubar \
  < "$TEMPDIR"/newkey > "$TEMPDIR"/newkey.gpg
 
-NEWKEYFPR=$(< "$TEMPDIR"/newkey.gpg gpg --with-colons --import-options import-show --dry-run --import | awk -F: '/^fpr:/{ print $10 }' )
+NEWKEYFPR=$(< "$TEMPDIR"/newkey.gpg keytrans listfprs)
 NEWKEYID=$( printf "%s" "$NEWKEYFPR" | cut -b25-40)
 
 < "$TEMPDIR"/newkey.gpg gpg --import 
 
-gpg --batch --no-tty --faked-system-time "$timestamp" --quick-add-uid "$KEYID" baz
+< "$TEMPDIR"/secring.gpg \
+PEM2OPENPGP_TIMESTAMP="$timestamp" \
+    keytrans adduserid "$KEYID" "baz" | gpg --import
 
 cat >"$TEMPDIR"/expectedout <<EOF
-pub:u:3072:1:$KEYID:$timestamp:::u:::scSC
-uid:u::::$timestamp::8200BD0425CC70C7D698DF3FE412044EAAB83F94::testtest
-sig:!::1:$KEYID:$timestamp::::testtest:13x::$KEYFPR:::8
-uid:u::::$timestamp::EDDC32D783E7F4C7B6982D9AE5DC4A61000648BA::baz
-sig:!::1:$KEYID:$timestamp::::testtest:13x::$KEYFPR:::8
-pub:-:3072:1:$NEWKEYID:$(($timestamp + 1)):::-:::caCA
-uid:-::::$(($timestamp + 1))::A0D708F51CC257DEFC01AEDE1E0A5F329DFD8F16::fubar
-sig:!::1:$NEWKEYID:$(($timestamp + 1))::::fubar:13x::$NEWKEYFPR:::8
+pub:u:1024:1:$KEYID:$timestamp:::u:::scSC:
+uid:u::::$timestamp::E90EC72E68C6C2A0751DADC70F54F60D27B88C3D::monkeymonkey:
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:
+uid:r::::::8200BD0425CC70C7D698DF3FE412044EAAB83F94::testtest:
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:
+rev:!::1:$KEYID:$revtime::::monkeymonkey:30x:
+uid:u::::$timestamp::EDDC32D783E7F4C7B6982D9AE5DC4A61000648BA::baz:
+sig:!::1:$KEYID:$timestamp::::monkeymonkey:13x:
+pub:-:1024:1:$NEWKEYID:$(($timestamp + 1)):::-:::caCA:
+uid:-::::$(($timestamp + 1))::A0D708F51CC257DEFC01AEDE1E0A5F329DFD8F16::fubar:
+sig:!::1:$NEWKEYID:$(($timestamp + 1))::::fubar:13x:
 EOF
 
 echo "test: diff expected gpg list output"
-diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons | grep -vE '^(tru|fpr):' | cut -d: -f1-16 | sed 's/:*$//')
+diff -u "$TEMPDIR"/expectedout <(gpg --check-sigs --with-colons --fixed-list-mode | grep -v ^tru)
+
+sort >"$TEMPDIR"/expectedout <<EOF
+$KEYFPR
+$NEWKEYFPR
+EOF
+
+echo "test: diff expected keytrans listfpr output"
+diff -u "$TEMPDIR"/expectedout <( < "$TEMPDIR"/secring.gpg keytrans listfprs | sort )
 
 ## FIXME: addtest: not testing subkeys at the moment.
 

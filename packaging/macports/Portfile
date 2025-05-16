@@ -15,7 +15,7 @@ long_description    SSH key-based authentication is tried-and-true, \
                     used in both directions: for users to get \
                     validated host keys, and for hosts to authenticate \
                     users.
-homepage            https://web.monkeysphere.info/
+homepage            http://web.monkeysphere.info/
 platforms           darwin
 
 depends_run         bin:ssh:openssh \
@@ -24,7 +24,7 @@ depends_run         bin:ssh:openssh \
                     port:p5-digest-sha \
                     port:procmail
 
-master_sites        https://archive.monkeysphere.info/debian/pool/monkeysphere/m/monkeysphere/
+master_sites        http://archive.monkeysphere.info/debian/pool/monkeysphere/m/monkeysphere/
 distname            ${name}_${version}
 extract.suffix      .orig.tar.gz
 worksrcdir          ${name}-${version}
@@ -56,7 +56,8 @@ post-build {
 
     # fix perl shebang line to point to macports perl install
     exec sed -i .tmp -e "s|^#!/usr/bin/perl -T$|#!/opt/local/bin/perl -T|" \
-        ${worksrcpath}/src/share/keytrans
+        ${worksrcpath}/src/share/keytrans \
+        ${worksrcpath}/src/share/checkperms
 
     # remove leftover sed cruft
     exec find ${worksrcpath} -name *.tmp -delete

@@ -1,26 +1,19 @@
 Monkeysphere on Slackware
 =========================
 
-Silvio Rhatto wrote a SlackBuild script for the monkeysphere, which
-was found here:
+Silvio Rhatto has written a SlackBuild script for the monkeysphere.
 
-  https://slack.sarava.org/slackbuilds/net/misc/monkeysphere/
+You can find the SlackBuild here:
 
-As of January 2019, it appears to be no longer online, but a copy can
-be found at:
+  http://slack.sarava.org/slackbuilds/net/misc/monkeysphere/
 
-  https://github.com/pyllyukko/monkeysphere.SlackBuild
-
-History
--------
-
-This SlackBuild script was generated from a .mkbuild script, published
+This SlackBuild script is generated from a .mkbuild script, published
 separately:
 
-  https://slack.sarava.org/mkbuilds/net/misc/monkeysphere/
+  http://slack.sarava.org/mkbuilds/net/misc/monkeysphere/
 
 You can read more about the mkbuild system here:
 
-  https://simplepkg.sarava.org
+  http://simplepkg.sarava.org
 
 Thanks, rhatto!

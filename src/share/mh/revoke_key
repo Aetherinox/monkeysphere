@@ -93,10 +93,10 @@ y
 	if [ "${really/n/N}" = 'N' ] ; then
 	    printf "Not publishing.\n" >&2
 	else
-	    local newhome=$(msmktempdir)
+	    local newhome=$(mkmstempdir)
 	    GNUPGHOME="$newhome" gpg --no-tty --quiet --import < "$HOST_KEY_FILE"
 	    GNUPGHOME="$newhome" gpg --no-tty --quiet --import <<< "$revcert"
-	    GNUPGHOME="$newhome" gpg --keyserver "$KEYSERVER" --send-keys "0x${keyID}!"
+	    GNUPGHOME="$newhome" gpg --keyserver "$KEYSERVER" --send "0x${HOST_FINGERPRINT}!"
 	    rm -rf "$newhome"
 	fi
     fi

@@ -16,10 +16,7 @@
 # any unexpected errors should cause this script to bail:
 set -e
 
-SYSSHAREDIR=${MONKEYSPHERE_SYSSHAREDIR:-"__SYSSHAREDIR_PREFIX__/share/monkeysphere"}
-export SYSSHAREDIR
-. "${SYSSHAREDIR}/defaultenv"
-
+SYSDATADIR=${MONKEYSPHERE_SYSDATADIR:-"/var/lib/monkeysphere"}
 
 OLD_HOST_KEY_FILE="$SYSDATADIR"/ssh_host_rsa_key.pub.gpg
 if [ -f "$OLD_HOST_KEY_FILE" ] ; then

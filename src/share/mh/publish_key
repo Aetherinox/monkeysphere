@@ -8,7 +8,7 @@
 # Jamie McClelland <jm@mayfirst.org>
 # Daniel Kahn Gillmor <dkg@fifthhorseman.net>
 #
-# They are Copyright 2008-2019, and are all released under the GPL,
+# They are Copyright 2008-2010, and are all released under the GPL,
 # version 3 or later.
 
 # publish keys to keyserver
@@ -19,7 +19,6 @@ local keyID="$1"
 local GNUPGHOME
 
 if [ "$PROMPT" != "false" ] ; then
-    log debug "Because \$MONKEYSPHERE_PROMPT is set to $PROMPT, interactively confirm publishing key"
     printf "Really publish key '$keyID' to $KEYSERVER? (Y/n) " >&2
     read OK; OK=${OK:=Y}
     if [ "${OK/y/Y}" != 'Y' ] ; then
@@ -31,39 +30,30 @@ else
 fi
 
 # create a temporary gnupg directory from which to publish the key
-export TMPDIR=$MHTMPDIR
 export GNUPGHOME=$(msmktempdir)
 chmod 0700 "$GNUPGHOME"
-chown "$MONKEYSPHERE_USER":"$MONKEYSPHERE_GROUP" -- "$GNUPGHOME"
+chown "$MONKEYSPHERE_USER":"$MONKEYSPHERE_GROUP" "$GNUPGHOME"
 
-cleanup() {
-    if type gpgconf &>/dev/null; then
-        gpgconf --kill gpg-agent
-    fi
-    rm -rf "$GNUPGHOME"
-}
 # trap to remove tmp dir if break
-trap cleanup EXIT
+trap "rm -rf $GNUPGHOME" EXIT
 
 # import the key into the tmp dir
-run_as_monkeysphere_user \
-    gpg --quiet --import <"$HOST_KEY_FILE"
+su_monkeysphere_user \
+    "gpg --quiet --import" <"$HOST_KEY_FILE"
 
-ANCHORFILE=""
+KEYSERVER_OPTIONS=""
 for anchorfile in "${SYSCONFIGDIR}/monkeysphere-host-x509-anchors.crt" "${SYSCONFIGDIR}/monkeysphere-x509-anchors.crt"; do
-    if [ -z "$ANCHORFILE" ] && [ -r "$anchorfile"  ] ; then
-	log debug "using trust anchor file: $anchorfile"
-	ANCHORFILE="$anchorfile"
+    if [ -z "$KEYSERVER_OPTIONS" ] && [ -r "$anchorfile"  ] ; then
+        KEYSERVER_OPTIONS="--keyserver-options 'ca-cert-file=$anchorfile'"
     fi
 done
 
 # publish key
-log debug "publishing key with the following gpg command line and options:"
-run_as_monkeysphere_user \
-    gpg --keyserver "$KEYSERVER" ${ANCHORFILE:+--keyserver-options "ca-cert-file=$ANCHORFILE"} --send-keys "0x${keyID}!"
+su_monkeysphere_user \
+    "gpg --keyserver $KEYSERVER $KEYSERVER_OPTIONS --send-keys '0x${keyID}!'"
 
 # remove the tmp file
 trap - EXIT
-cleanup
+rm -rf "$GNUPGHOME"
 
 }
