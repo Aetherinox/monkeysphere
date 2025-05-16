@@ -1,4 +1,0 @@
-# Monkeysphere ssh config stanza (for ~/.ssh/config or /etc/ssh_config)
-# This checks for host keys in the OpenPGP WoT:
-Host *
-ProxyCommand monkeysphere ssh-proxycommand %h %p
