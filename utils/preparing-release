@@ -1,0 +1,28 @@
+### Notes about preparing a release for the monkeysphere ###
+
+ * make sure that ./Changelog and debian/changelog both have
+   reasonable version numbers.
+
+ * have the monkeysphere archive signing key handy!
+
+ * create upstream version tag: 
+
+    git tag -s -m "Tagging Monkeysphere $version" monkeysphere_$version master
+
+ * create debian-specific version tag:
+
+    git tag -s -m "Tagging Monkeysphere $version-1" monkeysphere_debian/$version-1 debian/master
+
+ * make releasenote
+
+ * upload to monkeysphere repo:
+
+    (cd ../monkeysphere-docs/repo && reprepro --ignore=wrongdistribution include experimental ../../monkeysphere_$version-1_*.changes)
+
+ * upload to debian:
+
+   (cd .. && dupload monkeysphere_$version-1_*.changes)
+
+ * git push monkeysphere.info --follow-tags master debian/master
+
+ * cd ../monkeysphere-docs, inspect, and then push out those changes.

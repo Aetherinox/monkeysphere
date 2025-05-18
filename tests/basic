@@ -1,0 +1,961 @@
+#!/usr/bin/env bash
+# #
+#   Tests to ensure that the monkeysphere is working
+#   
+#   unset MONKEYSPHERE_TEST_NO_EXAMINE to get a prompt to examine the
+#   test state after failure.
+#   
+#   @copyright          Copyright: © 2008-2019
+#   @license            GPL v3 or later
+#   @authors            Daniel Kahn Gillmor <dkg@fifthhorseman.net>
+#                       Jameson Rollins <jrollins@fifthhorseman.net>
+#                       Micah Anderson <micah@riseup.net> 
+#                       Aetherinox <aetherinox@proton.me>
+# #
+
+# #
+#   these tests should all be able to run as a non-privileged user.
+#   put all the test output to stdout
+# #
+
+exec 2>&1
+
+# #
+#   all subcommands in this script should complete without failure:
+# #
+
+set -e
+
+# #
+#   piped commands should return the code of the first non-zero return
+# #
+
+set -o pipefail
+
+# #
+#   make sure the TESTDIR is an absolute path, not a relative one.
+# #
+
+export TESTDIR=$(cd $(dirname "$0") && pwd)
+source "$TESTDIR"/common
+
+# #
+#   make sure that the right tools are installed to run the test.  the
+#   test has *more* requirements than plain ol' monkeysphere:
+# #
+
+[ -f /usr/sbin/sshd ] || { echo "You must have sshd installed to run this test." ; exit 1; }
+which socat >/dev/null || { echo "You must have socat installed to run this test." ; exit 1; }
+
+# #
+#   gpg command for test admin user
+# #
+
+gpgadmin()
+{
+    chmod 0700 "$TEMPDIR"/admin "$TEMPDIR"/admin/.gnupg
+    GNUPGHOME="$TEMPDIR"/admin/.gnupg gpg --no-tty "$@"
+}
+
+# #
+#   test ssh connection
+#   first argument is expected return code from ssh connection
+# #
+
+ssh_test()
+{
+    local RETURN=0
+    local remote_command=${1:-true}
+
+    umask 0077
+    CODE=${2:-0}
+
+    # start the ssh daemon on the socket
+    printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Starting ${c[yellow1]}SSH Server${c[end]}"
+    socat EXEC:"/usr/sbin/sshd -f ${SSHD_CONFIG} -i -D -e" "UNIX-LISTEN:${SOCKET},unlink-early" 2> "$TEMPDIR"/sshd.log &
+    SSHD_PID="$!"
+
+    # wait until the socket is created before continuing
+    while [ ! -S "$SOCKET" ] ; do
+	    sleep 1
+    done
+
+    # make a client connection to the socket
+    printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Starting ${c[yellow1]}SSH Client${c[end]}"
+
+    printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}ssh-agent bash -c \"monkeysphere subkey-to-ssh-agent && ssh -F $TEMPDIR/testuser/.ssh/config ${target_hostname:-testhost.example} $remote_command\"${c[end]}"
+    ssh-agent bash -c \
+	"monkeysphere subkey-to-ssh-agent && ssh -F $TEMPDIR/testuser/.ssh/config ${target_hostname:-testhost.example} $remote_command" \
+	|| RETURN="$?"
+
+    # kill the sshd process if it's still running
+    kill "$SSHD_PID" || true
+    wait
+    SSHD_PID=
+
+    if [ "$RETURN" = "$CODE" ] ; then
+        printf '%-29s %-65s\n' " ${c[green1]}OK${c[end]}" "${c[end]}SSH connection test ${c[green1]}PASSED${c[end]} with response ${c[yellow1]}$RETURN${c[end]}"
+	    return 0
+    else
+        printf '%-29s %-65s\n' " ${c[red2]}ERROR${c[end]}" "${c[end]}SSH connection test ${c[red2]}FAILED${c[end]} with response ${c[yellow1]}$RETURN${c[end]}; expected ${c[yellow1]}$CODE${c[end]}"
+        cat "$TEMPDIR/sshd.log"
+	    return 1
+    fi
+}
+
+# #
+#   invoke this instead of ssh_test() if you want this test to be
+#   skipped when the working directory has bad permissions.
+# #
+
+ssh_good_perm_test()
+{
+    if [ "$TEMPDIR_PERMISSIONS_SAFE" = no ] ; then
+	    echo "WARNING!!! Test SKIPPED because we are running in an unsafe working directory."
+    else
+	    ssh_test "$@"
+    fi
+}
+
+# #
+#   define > general
+# #
+
+SSHD_PID=
+argDebugMode=true
+
+# #
+#   Make sure $DISPLAY is set to convince ssh and monkeysphere to fall
+#   back on $SSH_ASKPASS.  Make sure it's not set to the current actual
+#   $DISPLAY (if one exists) because this test suite should not be doing
+#   *anything* with any running X11 session.
+# #
+
+# #
+#   setup trap
+# #
+
+trap failed_cleanup EXIT
+
+# #
+#   SETUP VARIABLES
+#   
+#   set up some variables to ensure that we're operating strictly in
+#   the tests, not system-wide:
+#   
+#   set up temp dir
+#   
+#   NOTE: /tmp can not be used as the temp dir here, since the
+#   permissions on /tmp are usually such that they will not pass the
+#   monkeysphere/ssh path permission checking.  If you need to use a
+#   different location than the current source, please set $TMPDIR
+#   somewhere with tighter permissions.
+# #
+
+mkdir -p "$TESTDIR"/tmp
+TEMPDIR=$(mktemp -d "${TMPDIR:-$TESTDIR/tmp}/ms.XXX")
+
+if [ -z "$MONKEYSPHERE_TEST_USE_SYSTEM" ] ; then
+    # #
+    #   Use the local copy of executables first, instead of system ones.
+    #   This should help us test without installing.
+    # #
+
+    export PATH="$TESTDIR/../src:$TESTDIR/../src/agent-transfer:$PATH"
+    export MONKEYSPHERE_SYSSHAREDIR="$TESTDIR"/../src/share
+else
+    if ! which monkeysphere-host; then
+        PATH=/usr/sbin:"$PATH"
+    fi
+fi
+
+export MONKEYSPHERE_SYSCONFIGDIR="$TEMPDIR"
+export MONKEYSPHERE_SYSDATADIR="$TEMPDIR"
+export MONKEYSPHERE_MONKEYSPHERE_USER=$(whoami)
+export MONKEYSPHERE_CHECK_KEYSERVER=false
+HOST_KEY_FILE="$MONKEYSPHERE_SYSCONFIGDIR"/host_keys.pub.pgp
+
+# #
+#   example.org does not respond to the HKP port, so this should cause
+#   any keyserver connection attempts that do happen (they shouldn't!)
+#   to hang, so we'll notice them:
+# #
+
+export MONKEYSPHERE_KEYSERVER=example.org
+export MONKEYSPHERE_LOG_LEVEL=DEBUG
+export MONKEYSPHERE_CORE_KEYLENGTH=3072
+export MONKEYSPHERE_PROMPT=false
+
+# #
+#   unset SUBKEYS_FOR_AGENT variable which, if set, would confuse the
+#   into trying to use the user's key, instead of the testuser's key
+# #
+
+unset MONKEYSPHERE_SUBKEYS_FOR_AGENT
+
+# #
+#   unset MONKEYSPHERE_VALIDATION_AGENT_SOCKET variable which, if set,
+#   would confuse the test into trying to talk the the user's agent
+# #
+
+unset MONKEYSPHERE_VALIDATION_AGENT_SOCKET
+
+export SSHD_CONFIG="$TEMPDIR"/sshd_config
+export SOCKET="$TEMPDIR"/ssh-socket
+export DISPLAY=monkeys
+
+# #
+#   we cannot do proper directory permissions checking if the current
+#   working directory has unsatisfactory permissions:
+# #
+
+if bash -c "$(printf 'source %q/common  && check_perms %q %q' "$MONKEYSPHERE_SYSSHAREDIR" "$(whoami)" "$TEMPDIR")"; then 
+    echo "Permissions on temporary directory '$TEMPDIR' are OK for permissions checks."
+    TEMPDIR_PERMISSIONS_SAFE=yes
+else
+    cat <<EOF
+
+!!!WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING!!!
+ Permissions on testing directory '$TEMPDIR' are
+ too loose to do proper strict permissions checking.  Some tests 
+ will be disabled or ignored.
+
+ To avoid this warning (and to make sure that all tests are run
+ properly), please run these tests within a directory that meets
+ sshd's standards for "StrictModes yes" -- the directory (and every
+ one of its parents) should be owned only be the user running this
+ test or root, and should not be writable by group or other.
+!!!WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING!!!
+
+EOF
+
+    # #
+    #   FIXME: what else should we do with this knowledge to make sure
+    #   that the appropriate tests are handled properly?
+    # #
+
+    TEMPDIR_PERMISSIONS_SAFE=no
+
+    # #
+    #   this is a new option (as of 0.26) to disable filesystem
+    #   permission checks.
+    #   
+    #   it should operate by analogy with StrictModes from sshd_config(5)
+    # #
+
+    export MONKEYSPHERE_STRICT_MODES=false
+
+fi
+
+# #
+#   CONFIGURE ENVIRONMENTS
+#   copy in admin and testuser home to tmp
+# #
+
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Configuring Testuser Home${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}cd \"$TESTDIR/home\" && find testuser | cpio -pdu \"$TEMPDIR\"${c[end]}"
+(cd "$TESTDIR"/home && find testuser | cpio -pdu "$TEMPDIR")
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run var ${c[fuchsia2]}export TESTHOME=\"$TEMPDIR/testuser\"${c[end]}"
+export TESTHOME="$TEMPDIR"/testuser
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run var ${c[fuchsia2]}GNUPGHOME=\"$TESTHOME/.gnupg\"${c[end]}"
+export GNUPGHOME="$TESTHOME"/.gnupg
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}mkdir -m 0700 -p \"$GNUPGHOME\"${c[end]}"
+mkdir -m 0700 -p "$GNUPGHOME"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}chmod 0700 \"$GNUPGHOME\"${c[end]}"
+chmod 0700 "$GNUPGHOME"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run var ${c[fuchsia2]}export SSH_ASKPASS=\"$TESTHOME/.ssh/askpass\"${c[end]}"
+export SSH_ASKPASS="$TESTHOME"/.ssh/askpass
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run var ${c[fuchsia2]}export MONKEYSPHERE_HOME=\"$TESTHOME/.monkeysphere\"${c[end]}"
+export MONKEYSPHERE_HOME="$TESTHOME"/.monkeysphere
+
+printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Writing to ${c[blue2]}\"$TESTHOME/.ssh/config\"${c[end]}"
+cat <<EOF >> "$TESTHOME"/.ssh/config
+UserKnownHostsFile $TESTHOME/.ssh/known_hosts
+IdentityFile $TESTHOME/.ssh/no-such-identity
+ProxyCommand $TESTHOME/.ssh/proxy-command %h %p $SOCKET
+EOF
+
+printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Writing to ${c[blue2]}\"$MONKEYSPHERE_HOME/monkeysphere.conf\"${c[end]}"
+cat <<EOF >> "$MONKEYSPHERE_HOME"/monkeysphere.conf
+KNOWN_HOSTS=$TESTHOME/.ssh/known_hosts
+EOF
+
+printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Writing to ${c[blue2]}\"$GNUPGHOME/gpg.conf\"${c[end]}"
+cat <<EOF > "$GNUPGHOME"/gpg.conf
+verify-options show-uid-validity
+list-options show-uid-validity
+EOF
+
+printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Adding ${c[blue2]}\"pinentry-program /usr/bin/pinentry\"${c[end]} to ${c[blue2]}\"$GNUPGHOME/gpg-agent.conf\"${c[end]}"
+get_gpg_prng_arg >> "$GNUPGHOME"/gpg.conf
+echo pinentry-program "$TESTDIR"/phony-pinentry >> "$GNUPGHOME/gpg-agent.conf"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpg --import < \"$TESTDIR/home-setup/testuser/secret_keyring.keys\"${c[end]}"
+gpg --import < "$TESTDIR"/home-setup/testuser/secret_keyring.keys
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpg --import-options import-local --import < \"$TESTDIR/home-setup/testuser/public_keyring.keys\"${c[end]}"
+gpg --import-options import-local --import < "$TESTDIR"/home-setup/testuser/public_keyring.keys
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpg --import-ownertrust < \"$TESTDIR/home-setup/testuser/ownertrustdb.txt\"${c[end]}"
+gpg --import-ownertrust < "$TESTDIR"/home-setup/testuser/ownertrustdb.txt
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Configuring Admin Home${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}mkdir -m 0700 -p \"$TEMPDIR/admin/.gnupg\"${c[end]}"
+mkdir -m 0700 -p "$TEMPDIR"/admin/.gnupg
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpgadmin --import < \"$TESTDIR/home-setup/admin/secret_keyring.keys\"${c[end]}"
+gpgadmin --import < "$TESTDIR"/home-setup/admin/secret_keyring.keys
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpgadmin --import-options import-local --import < \"$TESTDIR/home-setup/admin/public_keyring.keys\"${c[end]}"
+gpgadmin --import-options import-local --import < "$TESTDIR"/home-setup/admin/public_keyring.keys
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpgadmin --import-ownertrust < \"$TESTDIR/home-setup/admin/ownertrustdb.txt\"${c[end]}"
+gpgadmin --import-ownertrust < "$TESTDIR"/home-setup/admin/ownertrustdb.txt
+
+# #
+#   set up sshd
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Configuring SSHD${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}cp \"$TESTDIR\"/etc/ssh/sshd_config \"$SSHD_CONFIG\"${c[end]}"
+cp "$TESTDIR"/etc/ssh/sshd_config "$SSHD_CONFIG"
+
+# #
+#   write the sshd_config
+# #
+
+printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Writing to ${c[blue2]}\"$SSHD_CONFIG\"${c[end]}"
+
+cat <<EOF >> "$SSHD_CONFIG"
+HostKey ${MONKEYSPHERE_SYSDATADIR}/ssh_host_key
+AuthorizedKeysFile ${MONKEYSPHERE_SYSDATADIR}/authorized_keys/%u
+EOF
+
+# #
+#   disable sshd's strict permissions settings so that some tests can
+#   complete when running under a dubious path:
+# #
+
+if [ "$TEMPDIR_PERMISSIONS_SAFE" != yes ] ; then
+    printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Writing to ${c[blue2]}\"$SSHD_CONFIG\"${c[end]}"
+    cat <<EOF >> "$SSHD_CONFIG"
+StrictModes no
+EOF
+fi
+
+# #
+#   ───── SERVER HOST SETUP ──────────────────────────────────────────────────────────────────────────────────────────────
+# #
+
+# #
+#   import host key
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Import Host Key${c[end]}"
+
+if [ "$MONKEYSPHERE_TEST_USE_ED25519" = true ]; then
+    printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}ssh-keygen -t ed25519 -N '' -f \"$TEMPDIR/ssh_host_key\"${c[end]}"
+    ssh-keygen -t ed25519 -N '' -f "$TEMPDIR"/ssh_host_key
+else
+    printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}ssh-keygen -b 3072 -t rsa -N '' -f \"$TEMPDIR/ssh_host_key\"${c[end]}"
+    ssh-keygen -b 3072 -t rsa -N '' -f "$TEMPDIR"/ssh_host_key
+fi
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-host import-key \"$TEMPDIR/ssh_host_key ssh://testhost.example\"${c[end]}"
+monkeysphere-host import-key "$TEMPDIR"/ssh_host_key ssh://testhost.example
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Getting host key fingerprint${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}monkeysphere-host show-keys | grep '^OpenPGP fingerprint: ' | cut -f3 -d\ ${c[end]}"
+SSHHOSTKEYID=$( monkeysphere-host show-keys | grep '^OpenPGP fingerprint: ' | cut -f3 -d\  )
+echo "$SSHHOSTKEYID"
+
+# #
+#   change host key expiration
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Getting host key expiration${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-host set-expire 1${c[end]}"
+monkeysphere-host set-expire 1
+
+# #
+#   FIXME: how do we check that the expiration has really been set?
+# #
+
+# #
+#   certify host key with the "Admin's Key".
+#   (this would normally be done via keyservers)
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Certifying server host key${c[end]}"
+< "$HOST_KEY_FILE" gpgadmin --import
+echo y | gpgadmin --command-fd 0 --sign-key "$SSHHOSTKEYID"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}echo y | gpgadmin --command-fd 0 --sign-key \"$SSHHOSTKEYID\"${c[end]}"
+
+# #
+#   FIXME: add revoker?
+#   
+#   FIXME: how can we test publish-key without flooding junk into the keyservers?
+#   
+#   FIXME: should we run "diagnostics" here to test setup?
+# #
+
+# #
+#   ───── SERVER AUTHENTICATION SETUP ────────────────────────────────────────────────────────────────────────────────────
+# #
+
+# #
+#   set up monkeysphere authentication
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Setup Monkeysphere Authentication${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}cp \"$TESTDIR/etc/monkeysphere/monkeysphere-authentication.conf\" \"$TEMPDIR\"/  ${c[end]}"
+cp "$TESTDIR"/etc/monkeysphere/monkeysphere-authentication.conf "$TEMPDIR"/
+
+printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Writing to ${c[blue2]}\"$TEMPDIR/monkeysphere-authentication.conf\"${c[end]}"
+cat <<EOF >> "$TEMPDIR"/monkeysphere-authentication.conf
+AUTHORIZED_USER_IDS="$MONKEYSPHERE_HOME/authorized_user_ids"
+EOF
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication setup ${c[end]}"
+monkeysphere-authentication setup
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}get_gpg_prng_arg >> \"$MONKEYSPHERE_SYSDATADIR/authentication/sphere/gpg.conf\" ${c[end]}"
+get_gpg_prng_arg >> "$MONKEYSPHERE_SYSDATADIR"/authentication/sphere/gpg.conf
+
+# #
+#   add admin as identity certifier for testhost.example
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Adding Admin As Certificate${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpgadmin --yes --batch --export '<fakeadmin@example.net>' | monkeysphere-authentication add-id-certifier -  ${c[end]}"
+gpgadmin --yes --batch --export '<fakeadmin@example.net>' | monkeysphere-authentication add-id-certifier -
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Listing Certificates${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication list-certifiers ${c[end]}"
+monkeysphere-authentication list-certifiers
+
+# #
+#   FIXME: should we run "diagnostics" here to test setup?
+# #
+
+# #
+#   ───── TESTUSER SETUP ──────────────────────────────────────────────────────────────────────────────────────────
+# #
+
+# #
+#   generate an auth subkey for the test user that expires in 2 days
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+if [ "$MONKEYSPHERE_TEST_USE_ED25519" = true ]; then
+    printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Generating ed25519 Key for ${c[yellow1]}Testuser${c[end]}"
+    # from the imported secret key
+    USER_FPR=8A4B353B4CBA6F30625498BAE00B5EEEBA79B482
+    gpg --batch --no-tty --quick-add-key "$USER_FPR" ed25519 auth 2d
+else
+    printf '%-29s %-65s\n' " ${c[blue2]}STATUS${c[end]}" "${c[end]}Generating standard monkeysphere key for ${c[blue2]}testuser${c[end]}"
+    monkeysphere gen-subkey
+fi
+
+# #
+#   add server key to testuser keychain
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Export server key to ${c[yellow1]}Testuser${c[end]}"
+gpgadmin --armor --export "$SSHHOSTKEYID" | gpg --import
+
+# #
+#   teach the "server" about the testuser's key
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Export server key to ${c[yellow1]}Testuser${c[end]}"
+gpg --export testuser | monkeysphere-authentication gpg-cmd --import
+
+# #
+#   update authorized_keys for user
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Update server authorized_keys for User ${c[yellow1]}Testuser${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+# #
+#   FIXME: this is maybe not failing properly for:
+#   ms: improper group or other writability on path '/tmp'.
+# #
+
+# #
+#   TESTS
+# #
+
+# #
+#   see whether keys-for-userid works from the client's perspective:
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Testing Monkeysphere keys-for-userid ${c[yellow1]}Testuser${c[end]}"
+diff <( monkeysphere keys-for-userid ssh://testhost.example ) <( cut -f1,2 -d' ' < "$TEMPDIR"/ssh_host_key.pub )
+
+# #
+#   connect to test sshd, using monkeysphere ssh-proxycommand to verify
+#   the identity before connection.  This should work in both directions!
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH Connection Test for ${c[green1]}Success${c[blue2]} Response${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test true${c[end]}"
+
+# #
+#   Make sure it works if there is "armor" written in gpg.conf
+#   add other weirdnesses here as they come up.
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Test Functionality With Unusual ${c[yellow1]}gpg.conf${c[blue2]} File${c[end]}"
+echo 'armor' >> "$GNUPGHOME"/gpg.conf
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test true${c[end]}"
+ssh_test true
+
+# #
+#   remove the testuser's authorized_user_ids file, update, and make
+#   sure that the ssh authentication FAILS
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Remove ${c[yellow1]}Testuser${c[fuchsia2]} file ${c[yellow1]}authorized_user_ids${c[fuchsia2]} ${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}mv \"$TESTHOME/.monkeysphere/authorized_user_ids{.bak,}\"${c[end]}"
+mv "$TESTHOME"/.monkeysphere/authorized_user_ids{,.bak}
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[red2]}FAILURE${c[green1]} response${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test true 255${c[end]}"
+ssh_test true 255
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}mv \"$TESTHOME/.monkeysphere/authorized_user_ids{.bak,}\"${c[end]}"
+mv "$TESTHOME"/.monkeysphere/authorized_user_ids{.bak,}
+
+# #
+#   put improper permissions on authorized_user_ids file, update, and
+#   make sure ssh authentication FAILS
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Set group write (g+w) permissions on ${c[yellow1]}\"$TESTHOME/.monkeysphere/authorized_user_ids\"${c[fuchsia2]} ${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}chmod g+w \"$TESTHOME/.monkeysphere/authorized_user_ids\"${c[end]}"
+chmod g+w "$TESTHOME"/.monkeysphere/authorized_user_ids
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[red2]}FAILURE${c[green1]} response${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_good_perm_test true 255${c[end]}"
+ssh_good_perm_test true 255
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}chmod g-w \"$TESTHOME/.monkeysphere/authorized_user_ids\"${c[end]}"
+chmod g-w "$TESTHOME"/.monkeysphere/authorized_user_ids
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Set write permissions on ${c[yellow1]}\"$TESTHOME/.monkeysphere/authorized_user_ids\"${c[fuchsia2]} ${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}chmod o+w \"$TESTHOME/.monkeysphere/authorized_user_ids\"${c[end]}"
+chmod o+w "$TESTHOME"/.monkeysphere/authorized_user_ids
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[red2]}FAILURE${c[green1]} response${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_good_perm_test true 255${c[end]}"
+ssh_good_perm_test true 255
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}chmod o-w \"$TESTHOME/.monkeysphere/authorized_user_ids\"${c[end]}"
+chmod o-w "$TESTHOME"/.monkeysphere/authorized_user_ids
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+# #
+#   test symlinks
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Prepare folder ${c[yellow1]}.monkeysphere${c[green1]} for symlink tests${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}cp -a \"$TESTHOME/.monkeysphere{,.linktest}\"${c[end]}"
+cp -a "$TESTHOME"/.monkeysphere{,.linktest}
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Main ${c[yellow1]}authorized_user_ids${c[green1]} absolute symlink${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}mv \"$TESTHOME/.monkeysphere/authorized_user_ids{,.bak}\"${c[end]}"
+mv "$TESTHOME"/.monkeysphere/authorized_user_ids{,.bak}
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}ln -s \"$TESTHOME/.monkeysphere{.linktest,}/authorized_user_ids\"${c[end]}"
+ln -s "$TESTHOME"/.monkeysphere{.linktest,}/authorized_user_ids
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[green2]}SUCCESS${c[green1]} response${c[end]}"
+ssh_test true
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Set bad permissions on ${c[yellow1]}.monkeysphere.linktest${c[fuchsia2]} ${c[end]}"
+chmod o+w "$TESTHOME"/.monkeysphere.linktest
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[red2]}FAILURE${c[green1]} response${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_good_perm_test true 255${c[end]}"
+ssh_good_perm_test true 255
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}chmod o-w \"$TESTHOME/.monkeysphere.linktest\"${c[end]}"
+chmod o-w "$TESTHOME"/.monkeysphere.linktest
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Make ${c[yellow1]}authorized_user_ids${c[green1]} a relative symlink ${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}ln -sf ../.monkeysphere.linktest/authorized_user_ids \"$TESTHOME/.monkeysphere/authorized_user_ids\"${c[end]}"
+ln -sf ../.monkeysphere.linktest/authorized_user_ids "$TESTHOME"/.monkeysphere/authorized_user_ids
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[green2]}SUCCESS${c[green1]} response${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test true${c[end]}"
+ssh_test true
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Create bad permissions for folder ${c[yellow1]}\"$TESTHOME/.monkeysphere.linktest\"${c[green1]} for test${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}chmod o+w \"$TESTHOME/.monkeysphere.linktest\"${c[end]}"
+chmod o+w "$TESTHOME"/.monkeysphere.linktest
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[red2]}FAILURE${c[green1]} response${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_good_perm_test true 255${c[end]}"
+ssh_good_perm_test true 255
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}chmod o-w \"$TESTHOME/.monkeysphere.linktest\"${c[end]}"
+chmod o-w "$TESTHOME"/.monkeysphere.linktest
+
+# #
+#   FIXME: implement check of link path, and uncomment this test
+#   echo
+#   printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+#   echo "### create bad permissions on link dir and updating..."
+#   chmod o+w "$TESTHOME"/.monkeysphere
+#   monkeysphere-authentication update-users $(whoami)
+#   echo
+#   printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+# #
+
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[red2]}FAILURE${c[green1]} response${c[end]}"
+# ssh_good_perm_test true 255
+# chmod o-w "$TESTHOME"/.monkeysphere
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}rm \"$TESTHOME/.monkeysphere/authorized_user_ids\"${c[end]}"
+rm "$TESTHOME"/.monkeysphere/authorized_user_ids
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}mv \"$TESTHOME/.monkeysphere/authorized_user_ids{.bak,}\"${c[end]}"
+mv "$TESTHOME"/.monkeysphere/authorized_user_ids{.bak,}
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Make folder ${c[yellow1]}.monkeysphere${c[green1]} absolute symlink${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}mv \"$TESTHOME/.monkeysphere{,.bak}\"${c[end]}"
+mv "$TESTHOME"/.monkeysphere{,.bak}
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}ln -s \"$TESTHOME/.monkeysphere{.linktest,}\"${c[end]}"
+ln -s "$TESTHOME"/.monkeysphere{.linktest,}
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[green2]}SUCCESS${c[green1]} response${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test true${c[end]}"
+ssh_test true
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Create bad permissions for folder ${c[yellow1]}\"$TESTHOME/.monkeysphere.linktest\"${c[green1]} for test${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}chmod o+w \"$TESTHOME/.monkeysphere.linktest\"${c[end]}"
+chmod o+w "$TESTHOME"/.monkeysphere.linktest
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[red2]}FAILURE${c[green1]} response${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_good_perm_test true 255${c[end]}"
+ssh_good_perm_test true 255
+chmod o-w "$TESTHOME"/.monkeysphere.linktest
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+echo "### make .monkeysphere directory a relative symlink and updating..."
+ln -sfn .monkeysphere.linktest "$TESTHOME"/.monkeysphere
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[green2]}SUCCESS${c[green1]} response${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test true${c[end]}"
+ssh_test true
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+echo "### create bad permissions on link dir updating..."
+chmod o+w "$TESTHOME"/.monkeysphere.linktest
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[red2]}FAILURE${c[green1]} response${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_good_perm_test true 255${c[end]}"
+ssh_good_perm_test true 255
+chmod o-w "$TESTHOME"/.monkeysphere.linktest
+rm "$TESTHOME"/.monkeysphere
+mv "$TESTHOME"/.monkeysphere{.bak,}
+
+# #
+#   ensure we're back to normal:
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Reset settings back to normal for next test${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+ssh_test true
+
+# #
+#   check ssh authorized_key options
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Check SSH ${c[yellow1]}authorized__key${c[green1]} option support${c[end]}"
+cp "$TESTHOME"/.monkeysphere/authorized_user_ids{,.bak}
+echo ' no-X11-forwarding' >>"$TESTHOME"/.monkeysphere/authorized_user_ids
+echo '    no-port-forwarding' >>"$TESTHOME"/.monkeysphere/authorized_user_ids
+echo '	command="/bin/false"' >>"$TESTHOME"/.monkeysphere/authorized_user_ids
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test /bin/true 1${c[end]}"
+ssh_test /bin/true 1
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test /bin/false 1${c[end]}"
+ssh_test /bin/false 1
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}mv \"$TESTHOME/.monkeysphere/authorized_user_ids{.bak,}\"${c[end]}"
+mv "$TESTHOME"/.monkeysphere/authorized_user_ids{.bak,}
+
+# #
+#   ensure we're back to normal:
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Restore normal structure${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-authentication update-users $(whoami)${c[end]}"
+monkeysphere-authentication update-users $(whoami)
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test true${c[end]}"
+ssh_test true
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test directly to ${c[yellow1]}testhost2.example${c[green1]} without new name${c[end]}"
+target_hostname=testhost2.example ssh_test true 255
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Add servicename, certify by admin, import by user${c[end]}"
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-host add-servicename ssh://testhost2.example${c[end]}"
+monkeysphere-host add-servicename ssh://testhost2.example
+<"$HOST_KEY_FILE" gpgadmin --import
+printf "y\ny\n" | gpgadmin --yes --batch --command-fd 0 --sign-key "$SSHHOSTKEYID"
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection ${c[yellow1]}test${c[green1]} with hostname ${c[yellow1]}testhost2.example${c[green1]} added${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpgadmin --export \"$SSHHOSTKEYID\" | gpg --import${c[end]}"
+gpgadmin --export "$SSHHOSTKEYID" | gpg --import
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpg --check-trustdb${c[end]}"
+gpg --check-trustdb
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}ssh_test true${c[end]}"
+ssh_test true
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test directly to ${c[red2]}testhost2.example${c[green1]}${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpg --import <\"$HOST_KEY_FILE\"${c[end]}"
+gpg --import <"$HOST_KEY_FILE"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpg --check-trustdb${c[end]}"
+gpg --check-trustdb
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}testhost2.example ssh_test true${c[end]}"
+target_hostname=testhost2.example ssh_test true
+
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection for ${c[red2]}failure${c[green1]} with ${c[green1]}testhost2.example${c[green1]} revoked${c[end]}"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run func ${c[fuchsia2]}monkeysphere-host revoke-servicename ssh://testhost2.example${c[end]}"
+monkeysphere-host revoke-servicename ssh://testhost2.example
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpg --import <\"$HOST_KEY_FILE\"${c[end]}"
+gpg --import <"$HOST_KEY_FILE"
+
+printf '%-29s %-65s\n' " ${c[grey1]}DEV${c[end]}" "${c[end]}Run cmd ${c[fuchsia2]}gpg --check-trustdb${c[end]}"
+gpg --check-trustdb
+
+target_hostname=testhost2.example ssh_test true 255
+
+# #
+#   FIXME: addtest: remove admin as id-certifier and check ssh failure
+#   
+#   FIXME: addtest: how do we test that set-expire makes sense after new
+#   servicenames have been added?
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+echo "### testing monkeysphere authentication keys-for-user"
+diff <(monkeysphere-authentication keys-for-user $(whoami) | cut -d' ' -f1,2) <(cut -d' ' -f1,2 ${MONKEYSPHERE_SYSDATADIR}/authorized_keys/${MONKEYSPHERE_MONKEYSPHERE_USER}) 
+
+# #
+#   test to make sure things are OK after the previous tests:
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+echo "### settings reset, updating..."
+monkeysphere-authentication update-users $(whoami)
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[green2]}SUCCESS${c[green1]} response${c[end]}"
+ssh_test true
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+echo "### Testing TLS setup..."
+
+openssl req -config "$TESTDIR"/openssl.cnf -x509 -newkey rsa:3072 -subj '/DC=example/DC=testhost/CN=testhost.example/' -days 3 -keyout "$TEMPDIR"/tls_key.pem -nodes >"$TEMPDIR"/tls_cert.pem
+monkeysphere-host import-key "$TEMPDIR"/tls_key.pem https://testhost.example
+
+# #
+#   FIXME: how can we test this via an https client?  
+#   We don't currently provide one.
+#   
+#   FIXME: should we test other monkeysphere-host operations somehow now
+#   that we have more than one key in the host keyring?
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Revoking SSH Host Key${c[end]}"
+monkeysphere-host revoke-key "$SSHHOSTKEYID" | gpg --import
+
+# #
+#   generate the revocation certificate and feed it directly to the test
+#   user's keyring (we're not publishing to the keyservers)
+# #
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}SSH connection test for ${c[red2]}FAILURE${c[green1]} response${c[end]}"
+ssh_test true 255
+
+trap - EXIT
+
+echo
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+printf '%-2s %-65s\n\n' "${c[blue2]}${c[end]}" "${c[green1]}Monkeysphere Tests Completed Successfully${c[end]}"
+printf '%-1s %-65s\n' "${c[blue2]}${c[end]}" "${c[grey1]}──────────────────────────────────────────────────────────────────────────────────────────${c[end]}"
+
+cleanup

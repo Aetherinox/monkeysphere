@@ -1,0 +1,103 @@
+# -*-shell-script-*-
+
+# #
+#   define > colors
+#   
+#   Use the color table at:
+#       - https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
+# #
+
+declare -A c=(
+    [end]=$'\e[0m'
+    [white]=$'\e[97m'
+    [bold]=$'\e[1m'
+    [dim]=$'\e[2m'
+    [underline]=$'\e[4m'
+    [strike]=$'\e[9m'
+    [blink]=$'\e[5m'
+    [inverted]=$'\e[7m'
+    [hidden]=$'\e[8m'
+    [black]=$'\e[38;5;0m'
+    [fuchsia1]=$'\e[38;5;205m'
+    [fuchsia2]=$'\e[38;5;198m'
+    [red1]=$'\e[38;5;160m'
+    [red2]=$'\e[38;5;196m'
+    [orange1]=$'\e[38;5;202m'
+    [orange2]=$'\e[38;5;208m'
+    [magenta]=$'\e[38;5;5m'
+    [blue1]=$'\e[38;5;033m'
+    [blue2]=$'\e[38;5;033m'
+    [blue3]=$'\e[38;5;68m'
+    [cyan]=$'\e[38;5;51m'
+    [green1]=$'\e[38;5;2m'
+    [green2]=$'\e[38;5;76m'
+    [yellow1]=$'\e[38;5;184m'
+    [yellow2]=$'\e[38;5;190m'
+    [yellow3]=$'\e[38;5;193m'
+    [grey1]=$'\e[38;5;240m'
+    [grey2]=$'\e[38;5;244m'
+    [grey3]=$'\e[38;5;250m'
+    [navy]=$'\e[38;5;62m'
+    [olive]=$'\e[38;5;144m'
+    [peach]=$'\e[38;5;210m'
+)
+
+# #
+#   define > general
+# #
+
+argDebugMode=true
+
+# #
+#   func > failed cleanup
+# #
+
+failed_cleanup()
+{
+    # FIXME: can we be more verbose here?
+
+    printf '%-29s %-65s\n' " ${c[redd]}ERROR${c[end]}" "${c[end]}Process failed!${c[end]}"
+
+    if [ -z "$MONKEYSPHERE_TEST_NO_EXAMINE" ] ; then
+        printf '%-29s %-65s\n' " ${c[bluel]}STATUS${c[end]}" "${c[end]}Press ${c[yellowl]}ENTER${c[end]} to clean up and remove tmp folder."
+        printf '%-29s %-65s\n' " ${c[bluel]}      ${c[end]}" "${c[end]}Type ${c[yellowl]}'bash'${c[end]} for a subshell to examine." >&2
+	    read XX
+        if [ "$XX" = bash ] ; then
+            echo "Entering subshell..."
+            cd "$TEMPDIR"
+            bash
+        fi
+    fi
+
+    cleanup $argDebugMode
+}
+
+get_gpg_prng_arg()
+{
+    if (gpg --quick-random --version >/dev/null 2>&1) ; then
+	echo quick-random
+    elif (gpg --debug-quick-random --version >/dev/null 2>&1) ; then
+	echo debug-quick-random
+    fi
+}
+
+cleanup()
+{
+
+    argDebugMode="$1"
+
+    if [ "$argDebugMode" = true ]; then
+        printf '%-29s %-65s\n' " ${c[bluel]}STATUS${c[end]}" "${c[end]}Skip delete tmp dir ${c[yellowl]}$TEMPDIR${c[end]}; developer mode enabled"
+    else
+        printf '%-29s %-65s\n' " ${c[bluel]}STATUS${c[end]}" "${c[end]}Deleting tmp dir ${c[yellowl]}$TEMPDIR${c[end]}"
+        rm -rf "$TEMPDIR"
+    fi
+
+    if [ "$SSHD_PID" ] ; then
+	echo "### killing off lingering sshd..."
+	kill "$SSHD_PID"
+    fi
+
+    jobs
+    wait
+}

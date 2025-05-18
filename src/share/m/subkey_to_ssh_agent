@@ -1,0 +1,190 @@
+# -*-shell-script-*-
+# This should be sourced by bash (though we welcome changes to make it POSIX sh compliant)
+
+# Monkeysphere subkey-to-ssh-agent subcommand
+#
+# The monkeysphere scripts are written by:
+# Jameson Rollins <jrollins@finestructure.net>
+# Jamie McClelland <jm@mayfirst.org>
+# Daniel Kahn Gillmor <dkg@fifthhorseman.net>
+#
+# They are Copyright 2008-2019, and are all released under the GPL,
+# version 3 or later.
+
+# try to add all authentication subkeys to the agent
+
+# FIXME: what if you only want to add one authentication subkey to the
+# agent?
+
+# #
+#   define > colors
+#   
+#   Use the color table at:
+#       - https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
+# #
+
+declare -A c=(
+    [end]=$'\e[0m'
+    [white]=$'\e[97m'
+    [bold]=$'\e[1m'
+    [dim]=$'\e[2m'
+    [underline]=$'\e[4m'
+    [strike]=$'\e[9m'
+    [blink]=$'\e[5m'
+    [inverted]=$'\e[7m'
+    [hidden]=$'\e[8m'
+    [black]=$'\e[0;30m'
+    [redl]=$'\e[0;91m'
+    [redd]=$'\e[0;31m'
+    [magental]=$'\e[0;95m'
+    [magentad]=$'\e[0;35m'
+    [bluel]=$'\e[0;94m'
+    [blued]=$'\e[0;34m'
+    [cyanl]=$'\e[0;96m'
+    [cyand]=$'\e[0;36m'
+    [greenl]=$'\e[0;92m'
+    [greend]=$'\e[0;32m'
+    [yellowl]=$'\e[0;93m'
+    [yellowd]=$'\e[0;33m'
+    [greyl]=$'\e[0;37m'
+    [greyd]=$'\e[0;90m'
+    [navy]=$'\e[38;5;62m'
+    [olive]=$'\e[38;5;144m'
+    [peach]=$'\e[38;5;210m'
+)
+
+subkey_to_ssh_agent()
+{
+    local sshaddresponse=0
+    local secretkeys
+    local authsubkeys
+    local workingdir
+    local keysuccess=0
+    local subkey
+    local publine
+    local kname
+    local awk_pgrm
+
+    # if there's no agent running, don't bother:
+    if [ -z "$SSH_AUTH_SOCK" ] || ! type ssh-add >/dev/null ; then
+	    failure "No ssh-agent available."
+    fi
+
+    # and if it looks like it's running, but we can't actually talk to
+    # it, bail out:
+    ssh-add -l >/dev/null || sshaddresponse="$?"
+    if [ "$sshaddresponse" = "2" ]; then
+	    failure "Could not connect to ssh-agent"
+    fi
+
+    # if the MONKEYSPHERE_SUBKEYS_FOR_AGENT variable is set, use the
+    # keys specified there
+    if [ "$MONKEYSPHERE_SUBKEYS_FOR_AGENT" ] ; then
+	    authsubkeys="$MONKEYSPHERE_SUBKEYS_FOR_AGENT"
+
+    # otherwise find all authentication-capable subkeys and use those
+    else
+	# get list of secret keys
+	# (to work around bug https://bugs.g10code.com/gnupg/issue945):
+	secretkeys=$(gpg_user --yes --batch --list-secret-keys --with-colons \
+	    --fingerprint | \
+	    awk -F: '/^fpr:/{ if (ok) { print "0x" $10 "!" } ; ok=0 } /^sec:/{ ok=1 }')
+
+	if [ -z "$secretkeys" ]; then
+	    failure "You have no secret keys in your keyring!
+You might want to run 'gpg --gen-key'."
+	fi
+
+        # $2 regex means "is some kind of valid, or at least not invalid"
+        # $12 ~ /a/ means "authentication-capable"
+        # $4 == 1 means "RSA", $4 == 22 means "EdDSA"
+        awk_pgrm='
+/^sub:/{ if (($2 ~ /^[somfuq-]$/) && ($12 ~ /a/) && (($4 == 1) || ($4 == 22))) { ok = 1 }; };
+/^fpr:/{ if (ok) { print $10 ; ok = 0; }; };'
+	authsubkeys=$(gpg_user --list-keys --with-colons \
+	                       --fingerprint --fingerprint $secretkeys | \
+                             awk -F: "$awk_pgrm" | sort -u)
+
+	if [ -z "$authsubkeys" ]; then
+	    failure "no authentication-capable subkeys available.
+You might want to run 'monkeysphere gen-subkey'."
+	fi
+    fi
+
+    workingdir=$(msmktempdir)
+    trap "rm -rf $workingdir" EXIT
+    umask 077
+    mkfifo "$workingdir/passphrase"
+
+    # FIXME: we're currently allowing any other options to get passed
+    # through to ssh-add.  should we limit it to known ones?  For
+    # example: -d or -c and/or -t <lifetime> 
+
+    for subkey in $authsubkeys; do
+	# test that the subkey has proper capability
+        awk_pgrm='
+/^[ps]ub:/{ caps = $12 }
+/^fpr:/{ if ($10 == "'"${subkey}"'") { print caps }; }'
+	capability=$(gpg_user --with-colons --with-fingerprint --with-fingerprint \
+	    --list-keys "0x${subkey}!" \
+	    | awk -F: "$awk_pgrm")
+	if ! check_capability "$capability" 'a' ; then
+	    log error "Did not find authentication-capable subkey with key ID '$subkey'."
+	    continue
+	fi
+
+	# choose a label by which this key will be known in the agent:
+	# we are labelling the key by User ID instead of by
+	# fingerprint, but filtering out all / characters to make sure
+	# the filename is legit.
+
+        # FIXME: this assumes that the first listed uid is the primary
+        # UID.  does gpg guarantee that?  is there some better way to
+        # get this info?
+    printf '%-29s %-65s\n' " ${c[greyd]}DEV${c[end]}" "${c[end]}Run cmd ${c[magentad]}gpg_user --yes --batch --with-colons --list-key \"0x${subkey}!\" | grep '^uid:' | head -n1 | cut -f10 -d: | tr -d /${c[end]}"
+	primaryuid=$(gpg_user --yes --batch --with-colons --list-key "0x${subkey}!" | grep '^uid:' | head -n1 | cut -f10 -d: | tr -d /)
+    printf '%-29s %-65s\n' " ${c[bluel]}STATUS${c[end]}" "${c[bluel]}subkey_to_ssh_agent${c[end]}: Assigned var ${c[bluel]}\$primaryuid${c[end]} with value ${c[bluel]}$primaryuid${c[end]}"
+
+	#kname="[monkeysphere] $primaryuid"
+	kname="${primaryuid:-Monkeysphere Key 0x${subkey}}"
+
+    printf '%-29s %-65s\n' " ${c[bluel]}STATUS${c[end]}" "${c[bluel]}subkey_to_ssh_agent${c[end]}: Assigned var ${c[bluel]}\$kname${c[end]} with value ${c[bluel]}$kname${c[end]}"
+
+	if [ "$1" = '-d' ]; then
+        printf '%-29s %-65s\n' " ${c[bluel]}STATUS${c[end]}" "${c[bluel]}subkey_to_ssh_agent${c[end]}: Specified option ${c[bluel]}\"-d\"${c[end]}${c[end]}"
+	    # we're removing the subkey:
+        printf '%-29s %-65s\n' " ${c[bluel]}STATUS${c[end]}" "${c[end]}${c[bluel]}subkey_to_ssh_agent${c[end]}: Exporting SSH subkey ${c[bluel]}\"0x${subkey}!\"${c[end]} from GPG${c[end]}; output to ${c[bluel]}\"$workingdir/$kname\"${c[end]}"
+	    gpg_user --yes --batch --export-ssh-key "0x${subkey}!" | cut -f1,2 -d' ' > "$workingdir/$kname"
+	    (cd "$workingdir" && ssh-add -d "$kname") || keysuccess="$?"
+	else
+
+        printf '%-29s %-65s\n' " ${c[bluel]}STATUS${c[end]}" "${c[bluel]}subkey_to_ssh_agent${c[end]}: No specified option ${c[bluel]}\"-d\"${c[end]}${c[end]}"
+
+            awk_pgrm='
+/^fpr:/{ fpr = $10 }
+/^grp:/{ if (fpr == "'"${subkey}"'") { print $10; } }'
+
+        printf '%-29s %-65s\n' " ${c[greyd]}DEV${c[end]}" "${c[end]}Run cmd ${c[magentad]}gpg_user --with-colons --with-keygrip --with-fingerprint --with-fingerprint --list-keys \"0x${subkey}!\" | \\ ${c[end]}"
+        printf '%-29s %-65s\n' " ${c[greyd]}   ${c[end]}" "${c[magentad]}awk -F: \"$awk_pgrm\" ${c[end]}"
+        printf '%-29s %-65s\n' " ${c[greyd]}DEV${c[end]}" "${c[end]}Run cmd ${c[magentad]}agent-transfer \"$@\" \"$keygrip\" \"$kname\" ${c[end]}"
+
+	    keygrip=$(gpg --yes --batch --with-colons --with-keygrip \
+                               --with-fingerprint --list-keys "0x${subkey}!" \
+	                  | awk -F: "$awk_pgrm")
+            agent-transfer "$@" "$keygrip" "$kname" || keysuccess="$?"
+
+        printf '%-29s %-65s\n' " ${c[bluel]}STATUS${c[end]}" "${c[bluel]}subkey_to_ssh_agent${c[end]}: Assigned var ${c[bluel]}\$keygrip${c[end]} with value ${c[bluel]}$keygrip${c[end]}"
+
+	fi
+
+	rm -f "$workingdir/$kname"
+    done
+
+    trap - EXIT
+    rm -rf "$workingdir"
+
+    # FIXME: sort out the return values: we're just returning the
+    # failure code of the last authentication subkey which fails.
+    # what if more than one authentication subkey fails?
+    return "$keysuccess"
+}
