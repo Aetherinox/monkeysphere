@@ -1,0 +1,26 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Monkeysphere
+Source: https://github.com/Aetherinox/monkeysphere
+Upstream-Contact: Aetherinox <thebinaryninja@proton.me>
+
+Files: *
+Copyright: 2008-2025 Aetherinox <thebinaryninja@proton.me>,
+ Jameson Rollins <jrollins@fifthhorseman.net>,
+ Daniel Kahn Gillmor <dkg@fifthhorseman.net>,
+ Jamie McClelland <jamie@mayfirst.org>,
+ Micah Anderson <micah@riseup.net>,
+ Matthew Goins <mjgoins@openflows.com>,
+ Mike Castleman <mlcastle@mlcastle.net>,
+ Elliot Winard <enw@caveteen.com>,
+ Ross Glover <ross@ross.mayfirst.org>,
+ Greg Lyle <greg@stealthisemail.com>
+License: GPL-3+
+
+License: GPL-3+
+ This package is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation; either version 3 of the License, or
+ (at your option) any later version.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in file "/usr/share/common-licenses/GPL-3".

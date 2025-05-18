@@ -1,0 +1,10 @@
+*~
+src/agent-transfer/agent-transfer
+replaced/
+
+# #
+#   tmp
+# #
+
+src/tmp
+tests/tmp

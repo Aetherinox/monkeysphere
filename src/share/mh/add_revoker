@@ -1,0 +1,135 @@
+# -*-shell-script-*-
+# This should be sourced by bash (though we welcome changes to make it POSIX sh compliant)
+
+# Monkeysphere host add-revoker subcommand
+#
+# The monkeysphere scripts are written by:
+# Jameson Rollins <jrollins@finestructure.net>
+# Jamie McClelland <jm@mayfirst.org>
+# Daniel Kahn Gillmor <dkg@fifthhorseman.net>
+#
+# They are Copyright 2008-2019, and are all released under the GPL,
+# version 3 or later.
+
+# add a revoker to the host key
+
+add_revoker() {
+
+local revokerKeyID
+local keyID
+local tmpDir
+local fingerprint
+local addrevokerCommand
+
+# check that key ID or file is specified
+if [ -z "$1" ] ; then
+    failure "You must specify the key ID of a revoker key, or specify a file to read the key from."
+fi
+revokerKeyID="$1"
+shift
+
+keyID=$(check_key_input "$@")
+
+# make a temporary directory for storing keys during import, and set
+# the trap to delete it on exit
+TMPDIR=$MHTMPDIR
+tmpDir=$(msmktempdir)
+trap "$(printf 'rm -rf -- %q' "$tmpDir")" EXIT
+
+# fix permissions and ownership on temporary directory which will
+# be used by monkeysphere user
+chmod 0700 -- "$tmpDir"
+chown "$MONKEYSPHERE_USER":"$MONKEYSPHERE_GROUP" -- "$tmpDir"
+
+# if file is specified
+if [ -f "$revokerKeyID" -o "$revokerKeyID" = '-' ] ; then
+    # load the key from stdin
+    if [ "$revokerKeyID" = '-' ] ; then
+	# make a temporary file to hold the key from stdin
+	revokerKeyID="$tmpDir"/importkey
+	log verbose "reading revoker key from stdin..."
+	cat > "$revokerKeyID"
+
+    # load the key from the file
+    elif [ -f "$revokerKeyID" ] ; then
+	log verbose "reading revoker key from file '$revokerKeyID'..."
+    fi
+
+    # check the key is ok as monkeysphere user before loading
+    log debug "checking keys in file..."
+    fingerprint=$(run_as_monkeysphere_user env "TMPDIR=$tmpDir" \
+	bash -c "$(printf ". %q && list_primary_fingerprints" "${SYSSHAREDIR}/common")" < "$revokerKeyID")
+
+    if [ $(printf "%s" "$fingerprint" | egrep -c '^[A-F0-9]{40}$') -ne 1 ] ; then
+	failure "There was not exactly one gpg key in the file."
+    fi
+
+    # load the key
+    gpg_host --import <"$revokerKeyID" \
+	|| failure "could not read revoker key from '$revokerKeyID'"
+
+# else, get the revoker key from the keyserver
+else
+    # download the key from the keyserver as the monkeysphere user
+    log verbose "searching keyserver $KEYSERVER for revoker keyID $revokerKeyID..."
+    run_as_monkeysphere_user env GNUPGHOME="$tmpDir" gpg --quiet --keyserver "$KEYSERVER" --recv-key "0x${revokerKeyID}!" \
+	|| failure "Could not receive a key with this ID from keyserver '$KEYSERVER'."
+
+    # get the full fingerprint of new revoker key
+    log debug "getting fingerprint of revoker key..."
+    fingerprint=$(run_as_monkeysphere_user env GNUPGHOME="$tmpDir" gpg --list-key --with-colons --with-fingerprint "${revokerKeyID}" \
+	| awk -F: '/^fpr:/{ if (ok) { print $10 }; ok=0 } /^pub:/{ ok=1 }')
+
+    # test that there is only a single fingerprint
+    if (( $(echo "$fingerprint" | wc -l) != 1 )) ; then
+	cat <<EOF
+More than one fingerprint found:
+$fingerprint
+Please use a more specific key ID.
+EOF
+	failure
+    fi
+
+    log info "revoker key found:"
+    run_as_monkeysphere_user env GNUPGHOME="$tmpDir" gpg --fingerprint "0x${fingerprint}!"
+
+    if [ "$PROMPT" = "true" ] ; then
+	printf "Are you sure you want to add the above key as a revoker\nof the key '$keyID'? (Y/n) " >&2
+	read OK; OK=${OK:-Y}
+	if [ "${OK/y/Y}" != 'Y' ] ; then
+	    failure "revoker not added."
+	fi
+    else
+	log debug "adding revoker without prompting."
+    fi
+
+    # export the new key to the host keyring
+    log debug "loading revoker key into host keyring..."
+    run_as_monkeysphere_user env GNUPGHOME="$tmpDir" gpg --quiet --export "0x${fingerprint}!" \
+	| gpg_host --import
+fi
+
+# edit-key script to add revoker
+addrevokerCommand="addrevoker
+$fingerprint
+y
+save
+"
+# end script
+
+# core ltsigns the newly imported revoker key
+log debug "executing add revoker script..."
+if echo "$addrevokerCommand" | gpg_host_edit "0x${keyID}!" ; then
+
+    update_pgp_pub_file
+
+    log info "Revoker added."
+else
+    failure "Problem adding revoker."
+fi
+
+# remove the temporary directory
+trap - EXIT
+rm -rf -- "$tmpDir"
+
+}
